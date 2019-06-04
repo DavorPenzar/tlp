@@ -32,6 +32,8 @@ je metodama iz biblioteke paketa TensorLy.</li>
 <p>U ostatku dokumentacije pretpostavlja se da su izvršene linije</p>
 <pre><code class="Python">import numpy as np
 import tensorLy as tl
+
+from tlp import *
 </code></pre>
 <h2 id="bibliografija">Bibliografija</h2>
 <ol>
@@ -60,6 +62,8 @@ U ostatku dokumentacije pretpostavlja se da su izvršene linije
 ```Python
 import numpy as np
 import tensorLy as tl
+
+from tlp import *
 ```
 
 ##  Bibliografija
@@ -83,7 +87,11 @@ import numpy as _np
 import tensorly as _tl
 from tensorly.decomposition import parafac as _parafac
 
-def cwt (Z, theta = 0.0):
+# Osiguraj da se koristi numpy backend u TensorLy-ju.
+if _tl.get_backend() != &#39;numpy&#39;:
+    _tl.set_backend(&#39;numpy&#39;)
+
+def cwt (Z, theta = 0.5, norm = False):
     &#34;&#34;&#34;
     Izračunaj *collapsed weighted tensor* (*CWT*).
 
@@ -96,14 +104,20 @@ def cwt (Z, theta = 0.0):
 
     theta : [0 to 1), optional
         Parametar *gubitka* relevantnosti stanja kroz vrijeme (zadana vrijednost
-        je 0 &amp;mdash; nema *gubitka*).
+        je 0.5).
+
+    norm : boolean, optional
+        Ako je istina, povratni tenzor je težinska sredina umjesto obične sume,
+        to jest, povratna vrijednost je podijeljena sa
+        `sum((1.0 - theta) ** i for i in range(Z.shape[-1]))` (zadana
+        vrijednost je laž).
 
     Povratne vrijednosti
     --------------------
     array
         *CWT* zadanog tenzora `Z`.  Povratni tenzor dimenzionalnosti je za 1
         manje od tenzora `Z`, a oblikom je jednak obliku `Z.shape[:-1]`.  Ako je
-        `Z` jednosdimenzionalni tenzor (vektor), povratna vrijednost je skalar.
+        `Z` jednodimenzionalni tenzor (vektor), povratna vrijednost je skalar.
 
     Iznimke
     -------
@@ -130,13 +144,21 @@ def cwt (Z, theta = 0.0):
     ...       [21, 22],
     ...       [23, 24]]]
     &gt;&gt;&gt; cwt(Z)
-    array([[ 3.,  7., 11., 15.],
-           [19., 23., 27., 31.],
-           [35., 39., 43., 47.]])
-    &gt;&gt;&gt; cwt(Z, 0.5)
     array([[ 2.5,  5.5,  8.5, 11.5],
            [14.5, 17.5, 20.5, 23.5],
            [26.5, 29.5, 32.5, 35.5]])
+    &gt;&gt;&gt; cwt(Z, theta = 0.0)
+    array([[ 3.,  7., 11., 15.],
+           [19., 23., 27., 31.],
+           [35., 39., 43., 47.]])
+    &gt;&gt;&gt; cwt(Z, norm = True).round(3)
+    array([[ 1.667,  3.667,  5.667,  7.667],
+           [ 9.667, 11.667, 13.667, 15.667],
+           [17.667, 19.667, 21.667, 23.667]])
+    &gt;&gt;&gt; cwt(Z, theta = 0.0, norm = True)
+    array([[ 1.5,  3.5,  5.5,  7.5],
+           [ 9.5, 11.5, 13.5, 15.5],
+           [17.5, 19.5, 21.5, 23.5]])
 
     &#34;&#34;&#34;
 
@@ -175,29 +197,47 @@ def cwt (Z, theta = 0.0):
     if not (theta &gt;= 0.0 and theta &lt; 1.0):
         raise ValueError(&#39;theta mora biti u intervalu [0, 1).&#39;)
 
-    # Izračunaj 1 - theta.
-    _theta = 1.0 - theta
+    # Saniraj parametar norm.
+    if not isinstance(
+        norm,
+        (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
+    ):
+        raise TypeError(&#39;norm mora biti klase bool.&#39;)
+    if norm not in {0, False, 1, True}:
+        raise ValueError(&#39;norm mora biti laz/istina.&#39;)
+    try:
+        norm = _copy.deepcopy(bool(norm))
+    except (TypeError, ValueError):
+        raise TypeError(&#39;norm mora biti klase bool.&#39;)
 
     # Izračunaj prvih Z.shape[-1] elemenata geometrijskog niza s koeficijentom
     # 1 - theta.
-    theta = _np.flip(
-        _np.array(
-            [_theta ** n for n in iter(range(int(Z.shape[-1])))],
-            dtype = float,
-            order = &#39;F&#39;
-        )
-    ).copy(order = &#39;A&#39;)
+    _theta = _np.flip(
+        (1.0 - theta) ** _np.arange(Z.shape[-1], dtype = int)
+    ).copy(order = &#39;F&#39;)
 
-    # Vrati traženu sumu.
-    return (
-        theta.reshape(
+    # Izračunaj kompresijsku sumu.
+    Z_compressed = (
+        _theta.reshape(
             tuple(
                 _np.concatenate(
                     (_np.ones(Z.ndim - 1, dtype = int), [Z.shape[-1]])
                 ).tolist()
             )
         ) * Z
-    ).sum(axis = -1)
+    ).sum(axis = -1).copy(order = &#39;F&#39;)
+
+    # Ako je norm istina, podijeli kompresijsku sumu sa _theta.sum().
+    if norm:
+        Z_compressed /= _theta.sum()
+
+    # Po potrebi pretvori Z u skalar.
+    if isinstance(Z, _np.ndarray):
+        if Z.shape == tuple():
+            Z = Z.dtype.type(Z)
+
+    # Vrati kompresijsku sumu.
+    return Z_compressed
 
 def tsvd (X, k = None, compute = True):
     &#34;&#34;&#34;
@@ -259,41 +299,43 @@ def tsvd (X, k = None, compute = True):
 
     Primjeri
     --------
-    &gt;&gt;&gt; X = [[ 1,  5,  0],
-    ...      [-2,  4,  0],
-    ...      [ 0, -1, -1]]
-    &gt;&gt;&gt; tsvd(X, 1).round(3)
-    array([[-0.393,  4.885,  0.118],
-           [-0.333,  4.132,  0.1  ],
-           [ 0.082, -1.017, -0.025]])
-    &gt;&gt;&gt; tsvd(X, 2).round(3)
-    array([[ 0.997,  4.996,  0.148],
-           [-2.001,  3.998,  0.065],
-           [-0.019, -1.025, -0.027]])
-    &gt;&gt;&gt; tsvd(X, 3).round(3)
-    array([[ 1.,  5., -0.],
-           [-2.,  4., -0.],
-           [-0., -1., -1.]])
+    &gt;&gt;&gt; X = [[ 1,  5,  0, -2],
+    ...      [-2,  4,  0,  1],
+    ...      [ 0, -1, -1,  0]]
+    &gt;&gt;&gt; tsvd(X).round(3)
+    array([[ 1.,  5., -0., -2.],
+           [-2.,  4.,  0.,  1.],
+           [ 0., -1., -1., -0.]])
+    &gt;&gt;&gt; tsvd(X, k = 1).round(3)
+    array([[-0.321,  5.1  ,  0.121, -0.769],
+           [-0.243,  3.869,  0.092, -0.584],
+           [ 0.063, -0.997, -0.024,  0.15 ]])
+    &gt;&gt;&gt; tsvd(X, k = 2).round(3)
+    array([[ 1.012,  5.   ,  0.108, -1.988],
+           [-1.988,  4.   ,  0.108,  1.012],
+           [ 0.108, -1.   , -0.024,  0.108]])
 
-    Rekompozicija matrice.  Matrica `X` ne mora biti kvadratna kao u primjeru
-    (analogni pozivi koriste se i za ne-kvadratne matrice).
+    Rekompozicija matrice.
 
-    &gt;&gt;&gt; U, s, V = tsvd(X, 2, compute = False)
+    &gt;&gt;&gt; U, s, V = tsvd(X, k = 2, compute = False)
     &gt;&gt;&gt; U.round(3)
-    array([[ 0.754, -0.639],
-           [ 0.638,  0.767],
-           [-0.157,  0.046]])
+    array([[-0.787, -0.607],
+           [-0.597,  0.794],
+           [ 0.154, -0.021]])
     &gt;&gt;&gt; s.round(3)
-    array([6.501, 2.182])
+    array([6.566, 2.98 ])
     &gt;&gt;&gt; V.round(3)
-    array([[-0.08 ,  0.996,  0.024],
-           [-0.997, -0.08 , -0.021]])
+    array([[ 0.062, -0.737],
+           [-0.987,  0.055],
+           [-0.023,  0.007],
+           [ 0.149,  0.674]])
 
     Dekompozicija matrice `X`.
 
     Zabilješke
     ----------
-    Za opisane povratne vrijednosti, vrijedi `X_k = U_k @ np.diag(s_k) @ V_k.T`.
+    Za opisane povratne vrijednosti, vrijedi
+    `X_k == U_k @ np.diag(s_k) @ V_k.T`.
 
     &#34;&#34;&#34;
 
@@ -362,21 +404,21 @@ def tsvd (X, k = None, compute = True):
             1 if _np.isclose(1.0, 1.0 + s[0])
                 else int((~_np.isclose(1.0, 1.0 + s / s[0])).sum())
         )
-        U = U[:, :k].copy(order = &#39;F&#39;)
-        s = s[:k].copy(order = &#39;F&#39;)
-        V = V[:k, :].copy(order = &#39;F&#39;)
+        U = _np.array(U[:, :k], copy = True, order = &#39;F&#39;)
+        s = _np.array(s[:k], copy = True, order = &#39;F&#39;)
+        V = _np.array(V[:k, :].T, copy = True, order = &#39;F&#39;)
     else:
         U, s, V = _tl.partial_svd(X, n_eigenvecs = k)
-        U = U.copy(order = &#39;F&#39;)
-        s = s.copy(order = &#39;F&#39;)
-        V = V.copy(order = &#39;F&#39;)
+        U = _np.array(U, copy = True, order = &#39;F&#39;)
+        s = _np.array(s, copy = True, order = &#39;F&#39;)
+        V = _np.array(V.T, copy = True, order = &#39;F&#39;)
 
     # Vrati dekompoziciju ili rekompoziciju ovisno o vrijednosti parametra
     # compute.
-    return _np.matmul(
-        _np.matmul(U, _np.diag(s).copy(order = &#39;F&#39;)).copy(order = &#39;F&#39;),
-        V
-    ).copy(order = &#39;F&#39;) if compute else (U, s, V)
+    return (
+        _np.matmul(s * U, V.T.copy(order = &#39;F&#39;)).copy(order = &#39;F&#39;) if compute
+            else (U, s, V)
+    )
 
 def t_Katz_score (X, beta = 0.5, k = None, compute = True):
     &#34;&#34;&#34;
@@ -482,7 +524,7 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
     Katzova ocijena neusmjerenog grafa bez težina.
 
     &gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
-    &gt;&gt;&gt; X = (X + X.T) / 2
+    &gt;&gt;&gt; X += X.T
     &gt;&gt;&gt; X /= np.abs(X).max()
     &gt;&gt;&gt; X.round(3)
     array([[-0.   ,  0.   , -0.   , -1.   ],
@@ -526,7 +568,7 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
     Zabilješke
     ----------
     Za opisane povratne vrijednosti, vrijedi
-    `score_k = W_k @ np.diag(gamma_k) @ W_k.T`.
+    `score_k == W_k @ np.diag(gamma_k) @ W_k.T`.
 
     &#34;&#34;&#34;
 
@@ -604,8 +646,8 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
     # Izračunaj dekompoziciju Katzove ocijene.
     l, W = _np.linalg.eig(X)
     I = _np.flip(_np.argsort(_np.abs(l))).copy(order = &#39;F&#39;)
-    l = l[I].copy(order = &#39;F&#39;)
-    W = W[:, I].copy(order = &#39;F&#39;)
+    l = _np.array(l[I], copy = True, order = &#39;F&#39;)
+    W = _np.array(W[:, I], copy = True, order = &#39;F&#39;)
     del I
     if k is None:
         k = (
@@ -618,10 +660,7 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
     # Vrati Katzovu ocijenu ili njezinu dekompoziciju ovisno o vrijednosti
     # parametra compute.
     return _np.matmul(
-        _np.matmul(
-            W,
-            _np.diag((1.0 - beta * l) ** -1 - 1.0).copy(order = &#39;F&#39;)
-        ).copy(order = &#39;F&#39;),
+        ((1.0 - beta * l) ** -1 - 1.0).copy(order = &#39;F&#39;) * W,
         W.T.copy(order = &#39;F&#39;)
     ).copy(order = &#39;F&#39;) if compute else ((1.0 - beta * l) ** -1 - 1.0, W)
 
@@ -683,7 +722,7 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
         `(1.0 - beta ** 2 * s[i] ** 2) ** -1 - 1.0`.  Ova se povratna
         vrijednost vraća ako je `compute` laž.
 
-    V_k : (M, k) array
+    V_k : (N, k) array
         Ortogonalna matrica.  Ova se povratna vrijednost vraća ako je `compute`
         laž.
 
@@ -738,7 +777,7 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
 
     &gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
     &gt;&gt;&gt; X /= np.abs(X).max()
-    &gt;&gt;&gt; X.round(3)
+    &gt;&gt;&gt; X
     array([[-0.   ,  0.   , -0.25 ,  0.125],
            [-1.   ,  0.   , -0.   ,  0.125],
            [-0.   ,  0.5  , -0.25 ,  0.125]])
@@ -771,15 +810,17 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
     &gt;&gt;&gt; psi_p.round(3)
     array([0.341, 0.096])
     &gt;&gt;&gt; V.round(3)
-    array([[-0.991,  0.012, -0.011,  0.129],
-           [-0.049, -0.812,  0.522, -0.255]])
+    array([[-0.991, -0.049],
+           [ 0.012, -0.812],
+           [-0.011,  0.522],
+           [ 0.129, -0.255]])
 
     Dekompozicija Katzove ocijene bipartitnog grafa s težinama.
 
     Zabilješke
     ----------
     Za opisane povratne vrijednosti, vrijedi
-    `score_k = U_k @ np.diag(psi_m_k) @ V_k.T`.
+    `score_k == U_k @ np.diag(psi_m_k) @ V_k.T`.
 
     &#34;&#34;&#34;
 
@@ -860,26 +901,23 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
             1 if _np.isclose(1.0, 1.0 + s[0])
                 else int((~_np.isclose(1.0, 1.0 + s / s[0])).sum())
         )
-        U = U[:, :k].copy(order = &#39;F&#39;)
-        s = s[:k].copy(order = &#39;F&#39;)
-        V = V[:k, :].copy(order = &#39;F&#39;)
+        U = _np.array(U[:, :k], copy = True, order = &#39;F&#39;)
+        s = _np.array(s[:k], copy = True, order = &#39;F&#39;)
+        V = _np.array(V[:k, :].T, copy = True, order = &#39;F&#39;)
     else:
         U, s, V = _tl.partial_svd(X, n_eigenvecs = k)
-        U = U.copy(order = &#39;F&#39;)
-        s = s.copy(order = &#39;F&#39;)
-        V = V.copy(order = &#39;F&#39;)
+        U = _np.array(U, copy = True, order = &#39;F&#39;)
+        s = _np.array(s, copy = True, order = &#39;F&#39;)
+        V = _np.array(V.T, copy = True, order = &#39;F&#39;)
 
     # Vrati Katzovu ocijenu ili njezinu dekompoziciju ovisno o vrijednosti
     # parametra compute.
     return _np.matmul(
-        _np.matmul(
-            U,
-            _np.diag(beta * s / (1.0 - beta ** 2 * s ** 2)).copy(order = &#39;F&#39;)
-        ).copy(order = &#39;F&#39;),
-        V
+        (beta * s * (1.0 - beta ** 2 * s ** 2) ** -1).copy(order = &#39;F&#39;) * U,
+        V.T.copy(order = &#39;F&#39;)
     ).copy(order = &#39;F&#39;) if compute else (
         U,
-        beta * s / (1.0 - beta ** 2 * s ** 2),
+        beta * s * (1.0 - beta ** 2 * s ** 2) ** -1,
         (1.0 - beta ** 2 * s ** 2) ** -1 - 1.0,
         V
     )
@@ -924,8 +962,9 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
         za 1 manje od tenzora `Z` ako `predict` predviđa točno jedno stanje, a
         inače je dimenzionalnosti iste kao `Z`.  Prvih `Z.ndim - 1` dimenzija
         jednakih je kao tenzora `Z`, a, ako `predict` predviđa `n &gt; 1` stanja,
-        posljednja dimenzija je veličine `n`.  Ova se povratna vrijednost vraća
-        ako je `compute` istina.
+        posljednja dimenzija je veličine `n`.  Ako je predikcija array oblika
+        () ili (1,), povratna vrijednost je skalar.  Ova se povratna vrijednost
+        vraća ako je `compute` istina.
 
     l : (Z.ndim,) array
         Dekomponiramo li tenzor `Z` na tenzore `cp_components` ranga `k` tako da
@@ -978,58 +1017,60 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
     ...       [21, 22],
     ...       [23, 24]]]
     &gt;&gt;&gt; cp_score(Z).round(3)
-    array([[[ 1.503,  3.5  ,  5.497,  7.494],
-            [ 9.502, 11.5  , 13.499, 15.498],
-            [17.5  , 19.5  , 21.501, 23.502]]])
-    &gt;&gt;&gt; cwt(Z, 0.5)
-    array([[ 2.5,  5.5,  8.5, 11.5],
-           [14.5, 17.5, 20.5, 23.5],
-           [26.5, 29.5, 32.5, 35.5]])
+    array([[ 1.503,  3.5  ,  5.497,  7.494],
+           [ 9.502, 11.5  , 13.499, 15.498],
+           [17.5  , 19.5  , 21.501, 23.502]])
     &gt;&gt;&gt; cp_score(Z, k = 1).round(3)
-    array([[[ 3.836,  4.433,  5.031,  5.628],
-            [10.188, 11.775, 13.362, 14.949],
-            [16.54 , 19.116, 21.693, 24.269]]])
+    array([[ 3.836,  4.433,  5.031,  5.628],
+           [10.188, 11.775, 13.362, 14.949],
+           [16.54 , 19.116, 21.693, 24.269]])
     &gt;&gt;&gt; cp_score(Z, T0 = 1).round(3)
-    array([[[ 2.061,  4.009,  5.957,  7.905],
-            [ 9.982, 11.99 , 13.998, 16.005],
-            [17.904, 19.971, 22.038, 24.105]]])
+    array([[ 2.061,  4.009,  5.957,  7.905],
+           [ 9.982, 11.99 , 13.998, 16.005],
+           [17.904, 19.971, 22.038, 24.105]])
     &gt;&gt;&gt; cp_score(Z, k = 1, T0 = 1).round(3)
-    array([[[ 3.955,  4.571,  5.187,  5.803],
-            [10.504, 12.14 , 13.776, 15.412],
-            [17.053, 19.709, 22.365, 25.021]]])
+    array([[ 3.955,  4.571,  5.187,  5.803],
+           [10.504, 12.14 , 13.776, 15.412],
+           [17.053, 19.709, 22.365, 25.021]])
 
     *CP* ocijena tenzora.
 
     &gt;&gt;&gt; np.random.seed(1)
-    &gt;&gt;&gt; cp_score(Z, k = 2, predict = lambda x : np.random.randn(2)).round(3)
-    array([[[-21.019, -22.13 , -23.241, -24.352],
-            [-29.51 , -32.583, -35.657, -38.73 ],
-            [-38.001, -43.037, -48.073, -53.109]]])
+    &gt;&gt;&gt; cp_score(Z, predict = lambda X : np.random.randn(X.shape[-1])).round(3)
+    array([[-21.019, -22.13 , -23.241, -24.352],
+           [-29.51 , -32.583, -35.657, -38.73 ],
+           [-38.001, -43.037, -48.073, -53.109]])
     &gt;&gt;&gt; np.random.seed(1)
-    &gt;&gt;&gt; cp_score(Z, k = 2, predict = lambda x : np.random.randn(1, 2)).round(3)
-    array([[[-21.019, -22.13 , -23.241, -24.352],
-            [-29.51 , -32.583, -35.657, -38.73 ],
-            [-38.001, -43.037, -48.073, -53.109]]])
-    &gt;&gt;&gt; np.random.seed(1)
-    &gt;&gt;&gt; cp_score(Z, k = 2, predict = lambda x : np.random.randn(3, 2)).round(3)
-    array([[[[-21.019,  -3.169, -26.738],
-             [-22.13 ,  -0.827, -24.252],
-             [-23.241,   1.515, -21.767],
-             [-24.352,   3.858, -19.281]],
-            [[-29.51 ,   5.224, -22.513],
-             [-32.583,   7.089, -22.805],
-             [-35.657,   8.954, -23.098],
-             [-38.73 ,  10.819, -23.391]],
-            [[-38.001,  13.617, -18.287],
-             [-43.037,  15.005, -21.358],
-             [-48.073,  16.393, -24.429],
-             [-53.109,  17.78 , -27.5  ]]]])
+    &gt;&gt;&gt; cp_score(Z, predict = lambda X : np.random.randn(*X.shape)).round(3)
+    array([[[-21.019,  -3.169],
+            [-22.13 ,  -0.827],
+            [-23.241,   1.515],
+            [-24.352,   3.858]],
+           [[-29.51 ,   5.224],
+            [-32.583,   7.089],
+            [-35.657,   8.954],
+            [-38.73 ,  10.819]],
+           [[-38.001,  13.617],
+            [-43.037,  15.005],
+            [-48.073,  16.393],
+            [-53.109,  17.78 ]]])
 
-    Prethodni primjer nema stvarnog smisla, osim što demonstrira način poziva s
+    Ovaj primjer nema stvarnog smisla, osim što demonstrira način poziva s
     promjenom parametra `predict` i mijenjanja količine stanja koja se
     predviđaju.  Prije svakog poziva postavlja se *sjeme* generatora
     pseudo-slučajnih brojeva u biblioteci *NumPy*-ja zato da primjeri budu
     reproducibilni.
+
+    &gt;&gt;&gt; def sqmean (X):
+    ...     return np.sqrt(np.mean(np.square(X), axis = 0))
+    ...
+    &gt;&gt;&gt; cp_score(Z, predict = sqmean).round(3)
+    array([[ -1.494,  -3.493,  -5.493,  -7.493],
+           [ -9.5  , -11.501, -13.501, -15.502],
+           [-17.507, -19.508, -21.51 , -23.511]])
+
+    Primjer kako koristiti vlastitu, složeniju funkciju predikcije (iako se ovaj
+    primjer mogao realizirati također koristeći `lambda` funkciju).
 
     &#34;&#34;&#34;
 
@@ -1114,9 +1155,9 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
     )
     l = _np.ones(min(Z.shape) if k is None else k, dtype = float, order = &#39;F&#39;)
     for i in iter(range(int(Z.ndim))):
+        cpd[i] = _np.array(cpd[i], copy = True, order = &#39;F&#39;)
         if cpd[i].ndim &lt;= 1:
-            cpd[i] = cpd[i].reshape((cpd[i].size, 1))
-        cpd[i] = cpd[i].copy(order = &#39;F&#39;)
+            cpd[i] = cpd[i].reshape((cpd[i].size, 1)).copy(order = &#39;F&#39;)
         for k in iter(range(int(l.size))):
             aux_N = _np.linalg.norm(cpd[i][:, k])
             l[k] *= aux_N
@@ -1164,24 +1205,23 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
         return (l, _copy.deepcopy(cpd[:-1]), cpd[-1].T.copy(order = &#39;F&#39;))
 
     # Izračunaj rekompoziciju predikcije.
-    aux_dim = _np.ones(Z.ndim - 1, dtype = int, order = &#39;F&#39;)
+    # TODO: Ubrzati ovaj dio koda NumPy-jevim &#34;broadcastingom&#34;.
+    aux_dim = _np.ones(max(Z.ndim - 1, 0), dtype = int, order = &#39;F&#39;)
     S = _np.zeros(
         tuple(_np.concatenate((Z.shape[:-1], [cpd[-1].shape[1]])).tolist()),
         dtype = float,
         order = &#39;F&#39;
     )
     for k in iter(range(int(l.size))):
-        aux_S = l[k] * cpd[-1][k]
+        aux_S = l[k] * cpd[-1][k].ravel()
         aux_S = aux_S.reshape(
-            tuple(_np.concatenate((aux_dim, aux_S.shape)).tolist())
+            tuple(_np.concatenate((aux_dim, [aux_S.size])).tolist())
         )
         for i in iter(range(int(Z.ndim - 1))):
             aux_S = (
                 aux_S * cpd[i][:, k].reshape(
                     tuple(
-                        _np.concatenate(
-                            (aux_dim[:i - 1], [Z.shape[i]], aux_dim[i:])
-                        ).tolist()
+                        _np.concatenate(([Z.shape[i]], aux_dim[i:])).tolist()
                     )
                 )
             )
@@ -1189,10 +1229,14 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
         del aux_S
     del aux_dim
 
-    # Po potrebi redimenzioniraj predikciju.
+    # Po potrebi redimenzioniraj predikciju ili ju pretvori u skalar.
     if isinstance(S, _np.ndarray):
-        if S.shape[-1] == 1:
+        if S.shape == tuple():
+            S = S.dtype.type(S)
+        elif S.shape[-1] == 1:
             S = S.reshape(S.shape[:-1]).copy(order = &#39;F&#39;)
+            if S.shape == tuple():
+                S = S.dtype.type(S)
         else:
             S = S.copy(order = &#39;F&#39;)
 
@@ -1269,7 +1313,7 @@ vrijednost vraća ako je <code>compute</code> laž.</dd>
 <code>(1.0 - beta ** 2 * s[i] ** 2) ** -1 - 1.0</code>.
 Ova se povratna
 vrijednost vraća ako je <code>compute</code> laž.</dd>
-<dt><strong><code>V_k</code></strong> :&ensp;(<code>M</code>, <code>k</code>) <code>array</code></dt>
+<dt><strong><code>V_k</code></strong> :&ensp;(<code>N</code>, <code>k</code>) <code>array</code></dt>
 <dd>Ortogonalna matrica.
 Ova se povratna vrijednost vraća ako je <code>compute</code>
 laž.</dd>
@@ -1336,7 +1380,7 @@ array([[ 0.255, -0.246, -0.369, -0.114],
 <p>Katzova ocijena bipartitnog grafa bez težina.</p>
 <pre><code>&gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
 &gt;&gt;&gt; X /= np.abs(X).max()
-&gt;&gt;&gt; X.round(3)
+&gt;&gt;&gt; X
 array([[-0.   ,  0.   , -0.25 ,  0.125],
 
 
@@ -1385,15 +1429,17 @@ array([0.676, 0.324])
 &gt;&gt;&gt; psi_p.round(3)
 array([0.341, 0.096])
 &gt;&gt;&gt; V.round(3)
-array([[-0.991,  0.012, -0.011,  0.129],
+array([[-0.991, -0.049],
 
 
-   [-0.049, -0.812,  0.522, -0.255]])
+   [ 0.012, -0.812],
+   [-0.011,  0.522],
+   [ 0.129, -0.255]])
 </code></pre>
 <p>Dekompozicija Katzove ocijene bipartitnog grafa s težinama.</p>
 <h2 id="zabiljeske">Zabilješke</h2>
 <p>Za opisane povratne vrijednosti, vrijedi
-<code>score_k = U_k @ np.diag(psi_m_k) @ V_k.T</code>.</p></section>
+<code>score_k == U_k @ np.diag(psi_m_k) @ V_k.T</code>.</p></section>
 <details class="source">
 <summary>Source code</summary>
 <pre><code class="python">def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
@@ -1454,7 +1500,7 @@ array([[-0.991,  0.012, -0.011,  0.129],
         `(1.0 - beta ** 2 * s[i] ** 2) ** -1 - 1.0`.  Ova se povratna
         vrijednost vraća ako je `compute` laž.
 
-    V_k : (M, k) array
+    V_k : (N, k) array
         Ortogonalna matrica.  Ova se povratna vrijednost vraća ako je `compute`
         laž.
 
@@ -1509,7 +1555,7 @@ array([[-0.991,  0.012, -0.011,  0.129],
 
     &gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
     &gt;&gt;&gt; X /= np.abs(X).max()
-    &gt;&gt;&gt; X.round(3)
+    &gt;&gt;&gt; X
     array([[-0.   ,  0.   , -0.25 ,  0.125],
            [-1.   ,  0.   , -0.   ,  0.125],
            [-0.   ,  0.5  , -0.25 ,  0.125]])
@@ -1542,15 +1588,17 @@ array([[-0.991,  0.012, -0.011,  0.129],
     &gt;&gt;&gt; psi_p.round(3)
     array([0.341, 0.096])
     &gt;&gt;&gt; V.round(3)
-    array([[-0.991,  0.012, -0.011,  0.129],
-           [-0.049, -0.812,  0.522, -0.255]])
+    array([[-0.991, -0.049],
+           [ 0.012, -0.812],
+           [-0.011,  0.522],
+           [ 0.129, -0.255]])
 
     Dekompozicija Katzove ocijene bipartitnog grafa s težinama.
 
     Zabilješke
     ----------
     Za opisane povratne vrijednosti, vrijedi
-    `score_k = U_k @ np.diag(psi_m_k) @ V_k.T`.
+    `score_k == U_k @ np.diag(psi_m_k) @ V_k.T`.
 
     &#34;&#34;&#34;
 
@@ -1631,26 +1679,23 @@ array([[-0.991,  0.012, -0.011,  0.129],
             1 if _np.isclose(1.0, 1.0 + s[0])
                 else int((~_np.isclose(1.0, 1.0 + s / s[0])).sum())
         )
-        U = U[:, :k].copy(order = &#39;F&#39;)
-        s = s[:k].copy(order = &#39;F&#39;)
-        V = V[:k, :].copy(order = &#39;F&#39;)
+        U = _np.array(U[:, :k], copy = True, order = &#39;F&#39;)
+        s = _np.array(s[:k], copy = True, order = &#39;F&#39;)
+        V = _np.array(V[:k, :].T, copy = True, order = &#39;F&#39;)
     else:
         U, s, V = _tl.partial_svd(X, n_eigenvecs = k)
-        U = U.copy(order = &#39;F&#39;)
-        s = s.copy(order = &#39;F&#39;)
-        V = V.copy(order = &#39;F&#39;)
+        U = _np.array(U, copy = True, order = &#39;F&#39;)
+        s = _np.array(s, copy = True, order = &#39;F&#39;)
+        V = _np.array(V.T, copy = True, order = &#39;F&#39;)
 
     # Vrati Katzovu ocijenu ili njezinu dekompoziciju ovisno o vrijednosti
     # parametra compute.
     return _np.matmul(
-        _np.matmul(
-            U,
-            _np.diag(beta * s / (1.0 - beta ** 2 * s ** 2)).copy(order = &#39;F&#39;)
-        ).copy(order = &#39;F&#39;),
-        V
+        (beta * s * (1.0 - beta ** 2 * s ** 2) ** -1).copy(order = &#39;F&#39;) * U,
+        V.T.copy(order = &#39;F&#39;)
     ).copy(order = &#39;F&#39;) if compute else (
         U,
-        beta * s / (1.0 - beta ** 2 * s ** 2),
+        beta * s * (1.0 - beta ** 2 * s ** 2) ** -1,
         (1.0 - beta ** 2 * s ** 2) ** -1 - 1.0,
         V
     )</code></pre>
@@ -1698,8 +1743,10 @@ inače je dimenzionalnosti iste kao <code>Z</code>.
 Prvih <code>Z.ndim - 1</code> dimenzija
 jednakih je kao tenzora <code>Z</code>, a, ako <code>predict</code> predviđa <code>n &gt; 1</code> stanja,
 posljednja dimenzija je veličine <code>n</code>.
-Ova se povratna vrijednost vraća
-ako je <code>compute</code> istina.</dd>
+Ako je predikcija array oblika
+() ili (1,), povratna vrijednost je skalar.
+Ova se povratna vrijednost
+vraća ako je <code>compute</code> istina.</dd>
 <dt><strong><code>l</code></strong> :&ensp;(<code>Z.ndim</code>,) <code>array</code></dt>
 <dd>Dekomponiramo li tenzor <code>Z</code> na tenzore <code>cp_components</code> ranga <code>k</code> tako da
 je <code>j</code>-ti stupac svake komponente normiran, onda je
@@ -1750,80 +1797,77 @@ laž/istina, predikcija nije niz/matrica odgovarajućih dimenzija.</dd>
 ...       [21, 22],
 ...       [23, 24]]]
 &gt;&gt;&gt; cp_score(Z).round(3)
-array([[[ 1.503,  3.5  ,  5.497,  7.494],
+array([[ 1.503,  3.5  ,  5.497,  7.494],
 
 
-    [ 9.502, 11.5  , 13.499, 15.498],
-    [17.5  , 19.5  , 21.501, 23.502]]])
-
-&gt;&gt;&gt; cwt(Z, 0.5)
-array([[ 2.5,  5.5,  8.5, 11.5],
-
-
-   [14.5, 17.5, 20.5, 23.5],
-   [26.5, 29.5, 32.5, 35.5]])
+   [ 9.502, 11.5  , 13.499, 15.498],
+   [17.5  , 19.5  , 21.501, 23.502]])
 
 &gt;&gt;&gt; cp_score(Z, k = 1).round(3)
-array([[[ 3.836,  4.433,  5.031,  5.628],
+array([[ 3.836,  4.433,  5.031,  5.628],
 
 
-    [10.188, 11.775, 13.362, 14.949],
-    [16.54 , 19.116, 21.693, 24.269]]])
+   [10.188, 11.775, 13.362, 14.949],
+   [16.54 , 19.116, 21.693, 24.269]])
 
 &gt;&gt;&gt; cp_score(Z, T0 = 1).round(3)
-array([[[ 2.061,  4.009,  5.957,  7.905],
+array([[ 2.061,  4.009,  5.957,  7.905],
 
 
-    [ 9.982, 11.99 , 13.998, 16.005],
-    [17.904, 19.971, 22.038, 24.105]]])
+   [ 9.982, 11.99 , 13.998, 16.005],
+   [17.904, 19.971, 22.038, 24.105]])
 
 &gt;&gt;&gt; cp_score(Z, k = 1, T0 = 1).round(3)
-array([[[ 3.955,  4.571,  5.187,  5.803],
+array([[ 3.955,  4.571,  5.187,  5.803],
 
 
-    [10.504, 12.14 , 13.776, 15.412],
-    [17.053, 19.709, 22.365, 25.021]]])
+   [10.504, 12.14 , 13.776, 15.412],
+   [17.053, 19.709, 22.365, 25.021]])
 </code></pre>
 <p><em>CP</em> ocijena tenzora.</p>
 <pre><code>&gt;&gt;&gt; np.random.seed(1)
-&gt;&gt;&gt; cp_score(Z, k = 2, predict = lambda x : np.random.randn(2)).round(3)
-array([[[-21.019, -22.13 , -23.241, -24.352],
+&gt;&gt;&gt; cp_score(Z, predict = lambda X : np.random.randn(X.shape[-1])).round(3)
+array([[-21.019, -22.13 , -23.241, -24.352],
 
 
-    [-29.51 , -32.583, -35.657, -38.73 ],
-    [-38.001, -43.037, -48.073, -53.109]]])
-
-&gt;&gt;&gt; np.random.seed(1)
-&gt;&gt;&gt; cp_score(Z, k = 2, predict = lambda x : np.random.randn(1, 2)).round(3)
-array([[[-21.019, -22.13 , -23.241, -24.352],
-
-
-    [-29.51 , -32.583, -35.657, -38.73 ],
-    [-38.001, -43.037, -48.073, -53.109]]])
+   [-29.51 , -32.583, -35.657, -38.73 ],
+   [-38.001, -43.037, -48.073, -53.109]])
 
 &gt;&gt;&gt; np.random.seed(1)
-&gt;&gt;&gt; cp_score(Z, k = 2, predict = lambda x : np.random.randn(3, 2)).round(3)
-array([[[[-21.019,  -3.169, -26.738],
+&gt;&gt;&gt; cp_score(Z, predict = lambda X : np.random.randn(*X.shape)).round(3)
+array([[[-21.019,  -3.169],
 
 
-     [-22.13 ,  -0.827, -24.252],
-     [-23.241,   1.515, -21.767],
-     [-24.352,   3.858, -19.281]],
-    [[-29.51 ,   5.224, -22.513],
-     [-32.583,   7.089, -22.805],
-     [-35.657,   8.954, -23.098],
-     [-38.73 ,  10.819, -23.391]],
-    [[-38.001,  13.617, -18.287],
-     [-43.037,  15.005, -21.358],
-     [-48.073,  16.393, -24.429],
-     [-53.109,  17.78 , -27.5  ]]]])
+    [-22.13 ,  -0.827],
+    [-23.241,   1.515],
+    [-24.352,   3.858]],
+   [[-29.51 ,   5.224],
+    [-32.583,   7.089],
+    [-35.657,   8.954],
+    [-38.73 ,  10.819]],
+   [[-38.001,  13.617],
+    [-43.037,  15.005],
+    [-48.073,  16.393],
+    [-53.109,  17.78 ]]])
 </code></pre>
-<p>Prethodni primjer nema stvarnog smisla, osim što demonstrira način poziva s
+<p>Ovaj primjer nema stvarnog smisla, osim što demonstrira način poziva s
 promjenom parametra <code>predict</code> i mijenjanja količine stanja koja se
 predviđaju.
 Prije svakog poziva postavlja se <em>sjeme</em> generatora
 pseudo-slučajnih brojeva u biblioteci <em>NumPy</em>-ja zato da primjeri budu
-reproducibilni.</p></section>
+reproducibilni.</p>
+<pre><code>&gt;&gt;&gt; def sqmean (X):
+...     return np.sqrt(np.mean(np.square(X), axis = 0))
+...
+&gt;&gt;&gt; cp_score(Z, predict = sqmean).round(3)
+array([[ -1.494,  -3.493,  -5.493,  -7.493],
+
+
+   [ -9.5  , -11.501, -13.501, -15.502],
+   [-17.507, -19.508, -21.51 , -23.511]])
+</code></pre>
+<p>Primjer kako koristiti vlastitu, složeniju funkciju predikcije (iako se ovaj
+primjer mogao realizirati također koristeći <code>lambda</code> funkciju).</p></section>
 <details class="source">
 <summary>Source code</summary>
 <pre><code class="python">def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
@@ -1866,8 +1910,9 @@ reproducibilni.</p></section>
         za 1 manje od tenzora `Z` ako `predict` predviđa točno jedno stanje, a
         inače je dimenzionalnosti iste kao `Z`.  Prvih `Z.ndim - 1` dimenzija
         jednakih je kao tenzora `Z`, a, ako `predict` predviđa `n &gt; 1` stanja,
-        posljednja dimenzija je veličine `n`.  Ova se povratna vrijednost vraća
-        ako je `compute` istina.
+        posljednja dimenzija je veličine `n`.  Ako je predikcija array oblika
+        () ili (1,), povratna vrijednost je skalar.  Ova se povratna vrijednost
+        vraća ako je `compute` istina.
 
     l : (Z.ndim,) array
         Dekomponiramo li tenzor `Z` na tenzore `cp_components` ranga `k` tako da
@@ -1920,58 +1965,60 @@ reproducibilni.</p></section>
     ...       [21, 22],
     ...       [23, 24]]]
     &gt;&gt;&gt; cp_score(Z).round(3)
-    array([[[ 1.503,  3.5  ,  5.497,  7.494],
-            [ 9.502, 11.5  , 13.499, 15.498],
-            [17.5  , 19.5  , 21.501, 23.502]]])
-    &gt;&gt;&gt; cwt(Z, 0.5)
-    array([[ 2.5,  5.5,  8.5, 11.5],
-           [14.5, 17.5, 20.5, 23.5],
-           [26.5, 29.5, 32.5, 35.5]])
+    array([[ 1.503,  3.5  ,  5.497,  7.494],
+           [ 9.502, 11.5  , 13.499, 15.498],
+           [17.5  , 19.5  , 21.501, 23.502]])
     &gt;&gt;&gt; cp_score(Z, k = 1).round(3)
-    array([[[ 3.836,  4.433,  5.031,  5.628],
-            [10.188, 11.775, 13.362, 14.949],
-            [16.54 , 19.116, 21.693, 24.269]]])
+    array([[ 3.836,  4.433,  5.031,  5.628],
+           [10.188, 11.775, 13.362, 14.949],
+           [16.54 , 19.116, 21.693, 24.269]])
     &gt;&gt;&gt; cp_score(Z, T0 = 1).round(3)
-    array([[[ 2.061,  4.009,  5.957,  7.905],
-            [ 9.982, 11.99 , 13.998, 16.005],
-            [17.904, 19.971, 22.038, 24.105]]])
+    array([[ 2.061,  4.009,  5.957,  7.905],
+           [ 9.982, 11.99 , 13.998, 16.005],
+           [17.904, 19.971, 22.038, 24.105]])
     &gt;&gt;&gt; cp_score(Z, k = 1, T0 = 1).round(3)
-    array([[[ 3.955,  4.571,  5.187,  5.803],
-            [10.504, 12.14 , 13.776, 15.412],
-            [17.053, 19.709, 22.365, 25.021]]])
+    array([[ 3.955,  4.571,  5.187,  5.803],
+           [10.504, 12.14 , 13.776, 15.412],
+           [17.053, 19.709, 22.365, 25.021]])
 
     *CP* ocijena tenzora.
 
     &gt;&gt;&gt; np.random.seed(1)
-    &gt;&gt;&gt; cp_score(Z, k = 2, predict = lambda x : np.random.randn(2)).round(3)
-    array([[[-21.019, -22.13 , -23.241, -24.352],
-            [-29.51 , -32.583, -35.657, -38.73 ],
-            [-38.001, -43.037, -48.073, -53.109]]])
+    &gt;&gt;&gt; cp_score(Z, predict = lambda X : np.random.randn(X.shape[-1])).round(3)
+    array([[-21.019, -22.13 , -23.241, -24.352],
+           [-29.51 , -32.583, -35.657, -38.73 ],
+           [-38.001, -43.037, -48.073, -53.109]])
     &gt;&gt;&gt; np.random.seed(1)
-    &gt;&gt;&gt; cp_score(Z, k = 2, predict = lambda x : np.random.randn(1, 2)).round(3)
-    array([[[-21.019, -22.13 , -23.241, -24.352],
-            [-29.51 , -32.583, -35.657, -38.73 ],
-            [-38.001, -43.037, -48.073, -53.109]]])
-    &gt;&gt;&gt; np.random.seed(1)
-    &gt;&gt;&gt; cp_score(Z, k = 2, predict = lambda x : np.random.randn(3, 2)).round(3)
-    array([[[[-21.019,  -3.169, -26.738],
-             [-22.13 ,  -0.827, -24.252],
-             [-23.241,   1.515, -21.767],
-             [-24.352,   3.858, -19.281]],
-            [[-29.51 ,   5.224, -22.513],
-             [-32.583,   7.089, -22.805],
-             [-35.657,   8.954, -23.098],
-             [-38.73 ,  10.819, -23.391]],
-            [[-38.001,  13.617, -18.287],
-             [-43.037,  15.005, -21.358],
-             [-48.073,  16.393, -24.429],
-             [-53.109,  17.78 , -27.5  ]]]])
+    &gt;&gt;&gt; cp_score(Z, predict = lambda X : np.random.randn(*X.shape)).round(3)
+    array([[[-21.019,  -3.169],
+            [-22.13 ,  -0.827],
+            [-23.241,   1.515],
+            [-24.352,   3.858]],
+           [[-29.51 ,   5.224],
+            [-32.583,   7.089],
+            [-35.657,   8.954],
+            [-38.73 ,  10.819]],
+           [[-38.001,  13.617],
+            [-43.037,  15.005],
+            [-48.073,  16.393],
+            [-53.109,  17.78 ]]])
 
-    Prethodni primjer nema stvarnog smisla, osim što demonstrira način poziva s
+    Ovaj primjer nema stvarnog smisla, osim što demonstrira način poziva s
     promjenom parametra `predict` i mijenjanja količine stanja koja se
     predviđaju.  Prije svakog poziva postavlja se *sjeme* generatora
     pseudo-slučajnih brojeva u biblioteci *NumPy*-ja zato da primjeri budu
     reproducibilni.
+
+    &gt;&gt;&gt; def sqmean (X):
+    ...     return np.sqrt(np.mean(np.square(X), axis = 0))
+    ...
+    &gt;&gt;&gt; cp_score(Z, predict = sqmean).round(3)
+    array([[ -1.494,  -3.493,  -5.493,  -7.493],
+           [ -9.5  , -11.501, -13.501, -15.502],
+           [-17.507, -19.508, -21.51 , -23.511]])
+
+    Primjer kako koristiti vlastitu, složeniju funkciju predikcije (iako se ovaj
+    primjer mogao realizirati također koristeći `lambda` funkciju).
 
     &#34;&#34;&#34;
 
@@ -2056,9 +2103,9 @@ reproducibilni.</p></section>
     )
     l = _np.ones(min(Z.shape) if k is None else k, dtype = float, order = &#39;F&#39;)
     for i in iter(range(int(Z.ndim))):
+        cpd[i] = _np.array(cpd[i], copy = True, order = &#39;F&#39;)
         if cpd[i].ndim &lt;= 1:
-            cpd[i] = cpd[i].reshape((cpd[i].size, 1))
-        cpd[i] = cpd[i].copy(order = &#39;F&#39;)
+            cpd[i] = cpd[i].reshape((cpd[i].size, 1)).copy(order = &#39;F&#39;)
         for k in iter(range(int(l.size))):
             aux_N = _np.linalg.norm(cpd[i][:, k])
             l[k] *= aux_N
@@ -2106,24 +2153,23 @@ reproducibilni.</p></section>
         return (l, _copy.deepcopy(cpd[:-1]), cpd[-1].T.copy(order = &#39;F&#39;))
 
     # Izračunaj rekompoziciju predikcije.
-    aux_dim = _np.ones(Z.ndim - 1, dtype = int, order = &#39;F&#39;)
+    # TODO: Ubrzati ovaj dio koda NumPy-jevim &#34;broadcastingom&#34;.
+    aux_dim = _np.ones(max(Z.ndim - 1, 0), dtype = int, order = &#39;F&#39;)
     S = _np.zeros(
         tuple(_np.concatenate((Z.shape[:-1], [cpd[-1].shape[1]])).tolist()),
         dtype = float,
         order = &#39;F&#39;
     )
     for k in iter(range(int(l.size))):
-        aux_S = l[k] * cpd[-1][k]
+        aux_S = l[k] * cpd[-1][k].ravel()
         aux_S = aux_S.reshape(
-            tuple(_np.concatenate((aux_dim, aux_S.shape)).tolist())
+            tuple(_np.concatenate((aux_dim, [aux_S.size])).tolist())
         )
         for i in iter(range(int(Z.ndim - 1))):
             aux_S = (
                 aux_S * cpd[i][:, k].reshape(
                     tuple(
-                        _np.concatenate(
-                            (aux_dim[:i - 1], [Z.shape[i]], aux_dim[i:])
-                        ).tolist()
+                        _np.concatenate(([Z.shape[i]], aux_dim[i:])).tolist()
                     )
                 )
             )
@@ -2131,10 +2177,14 @@ reproducibilni.</p></section>
         del aux_S
     del aux_dim
 
-    # Po potrebi redimenzioniraj predikciju.
+    # Po potrebi redimenzioniraj predikciju ili ju pretvori u skalar.
     if isinstance(S, _np.ndarray):
-        if S.shape[-1] == 1:
+        if S.shape == tuple():
+            S = S.dtype.type(S)
+        elif S.shape[-1] == 1:
             S = S.reshape(S.shape[:-1]).copy(order = &#39;F&#39;)
+            if S.shape == tuple():
+                S = S.dtype.type(S)
         else:
             S = S.copy(order = &#39;F&#39;)
 
@@ -2143,7 +2193,7 @@ reproducibilni.</p></section>
 </details>
 </dd>
 <dt id="tlp.cwt"><code class="name flex">
-<span>def <span class="ident">cwt</span></span>(<span>Z, theta=0.0)</span>
+<span>def <span class="ident">cwt</span></span>(<span>Z, theta=0.5, norm=False)</span>
 </code></dt>
 <dd>
 <section class="desc"><p>Izračunaj <em>collapsed weighted tensor</em> (<em>CWT</em>).</p>
@@ -2154,7 +2204,12 @@ reproducibilni.</p></section>
 <dd>Tenzor numeričkih vrijednosti čiji se <em>CWT</em> računa.</dd>
 <dt><strong><code>theta</code></strong> :&ensp;[<code>0</code> <code>to</code> <code>1</code>), optional</dt>
 <dd>Parametar <em>gubitka</em> relevantnosti stanja kroz vrijeme (zadana vrijednost
-je 0 &mdash; nema <em>gubitka</em>).</dd>
+je 0.5).</dd>
+<dt><strong><code>norm</code></strong> :&ensp;<code>boolean</code>, optional</dt>
+<dd>Ako je istina, povratni tenzor je težinska sredina umjesto obične sume,
+to jest, povratna vrijednost je podijeljena sa
+<code>sum((1.0 - theta) ** i for i in range(Z.shape[-1]))</code> (zadana
+vrijednost je laž).</dd>
 </dl>
 <h2 id="povratne-vrijednosti">Povratne vrijednosti</h2>
 <dl>
@@ -2163,7 +2218,7 @@ je 0 &mdash; nema <em>gubitka</em>).</dd>
 Povratni tenzor dimenzionalnosti je za 1
 manje od tenzora <code>Z</code>, a oblikom je jednak obliku <code>Z.shape[:-1]</code>.
 Ako je
-<code>Z</code> jednosdimenzionalni tenzor (vektor), povratna vrijednost je skalar.</dd>
+<code>Z</code> jednodimenzionalni tenzor (vektor), povratna vrijednost je skalar.</dd>
 </dl>
 <h2 id="iznimke">Iznimke</h2>
 <dl>
@@ -2188,22 +2243,36 @@ intervalu [0, 1).</dd>
 ...       [21, 22],
 ...       [23, 24]]]
 &gt;&gt;&gt; cwt(Z)
+array([[ 2.5,  5.5,  8.5, 11.5],
+
+
+   [14.5, 17.5, 20.5, 23.5],
+   [26.5, 29.5, 32.5, 35.5]])
+
+&gt;&gt;&gt; cwt(Z, theta = 0.0)
 array([[ 3.,  7., 11., 15.],
 
 
    [19., 23., 27., 31.],
    [35., 39., 43., 47.]])
 
-&gt;&gt;&gt; cwt(Z, 0.5)
-array([[ 2.5,  5.5,  8.5, 11.5],
+&gt;&gt;&gt; cwt(Z, norm = True).round(3)
+array([[ 1.667,  3.667,  5.667,  7.667],
 
 
-   [14.5, 17.5, 20.5, 23.5],
-   [26.5, 29.5, 32.5, 35.5]])
+   [ 9.667, 11.667, 13.667, 15.667],
+   [17.667, 19.667, 21.667, 23.667]])
+
+&gt;&gt;&gt; cwt(Z, theta = 0.0, norm = True)
+array([[ 1.5,  3.5,  5.5,  7.5],
+
+
+   [ 9.5, 11.5, 13.5, 15.5],
+   [17.5, 19.5, 21.5, 23.5]])
 </code></pre></section>
 <details class="source">
 <summary>Source code</summary>
-<pre><code class="python">def cwt (Z, theta = 0.0):
+<pre><code class="python">def cwt (Z, theta = 0.5, norm = False):
     &#34;&#34;&#34;
     Izračunaj *collapsed weighted tensor* (*CWT*).
 
@@ -2216,14 +2285,20 @@ array([[ 2.5,  5.5,  8.5, 11.5],
 
     theta : [0 to 1), optional
         Parametar *gubitka* relevantnosti stanja kroz vrijeme (zadana vrijednost
-        je 0 &amp;mdash; nema *gubitka*).
+        je 0.5).
+
+    norm : boolean, optional
+        Ako je istina, povratni tenzor je težinska sredina umjesto obične sume,
+        to jest, povratna vrijednost je podijeljena sa
+        `sum((1.0 - theta) ** i for i in range(Z.shape[-1]))` (zadana
+        vrijednost je laž).
 
     Povratne vrijednosti
     --------------------
     array
         *CWT* zadanog tenzora `Z`.  Povratni tenzor dimenzionalnosti je za 1
         manje od tenzora `Z`, a oblikom je jednak obliku `Z.shape[:-1]`.  Ako je
-        `Z` jednosdimenzionalni tenzor (vektor), povratna vrijednost je skalar.
+        `Z` jednodimenzionalni tenzor (vektor), povratna vrijednost je skalar.
 
     Iznimke
     -------
@@ -2250,13 +2325,21 @@ array([[ 2.5,  5.5,  8.5, 11.5],
     ...       [21, 22],
     ...       [23, 24]]]
     &gt;&gt;&gt; cwt(Z)
-    array([[ 3.,  7., 11., 15.],
-           [19., 23., 27., 31.],
-           [35., 39., 43., 47.]])
-    &gt;&gt;&gt; cwt(Z, 0.5)
     array([[ 2.5,  5.5,  8.5, 11.5],
            [14.5, 17.5, 20.5, 23.5],
            [26.5, 29.5, 32.5, 35.5]])
+    &gt;&gt;&gt; cwt(Z, theta = 0.0)
+    array([[ 3.,  7., 11., 15.],
+           [19., 23., 27., 31.],
+           [35., 39., 43., 47.]])
+    &gt;&gt;&gt; cwt(Z, norm = True).round(3)
+    array([[ 1.667,  3.667,  5.667,  7.667],
+           [ 9.667, 11.667, 13.667, 15.667],
+           [17.667, 19.667, 21.667, 23.667]])
+    &gt;&gt;&gt; cwt(Z, theta = 0.0, norm = True)
+    array([[ 1.5,  3.5,  5.5,  7.5],
+           [ 9.5, 11.5, 13.5, 15.5],
+           [17.5, 19.5, 21.5, 23.5]])
 
     &#34;&#34;&#34;
 
@@ -2295,29 +2378,47 @@ array([[ 2.5,  5.5,  8.5, 11.5],
     if not (theta &gt;= 0.0 and theta &lt; 1.0):
         raise ValueError(&#39;theta mora biti u intervalu [0, 1).&#39;)
 
-    # Izračunaj 1 - theta.
-    _theta = 1.0 - theta
+    # Saniraj parametar norm.
+    if not isinstance(
+        norm,
+        (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
+    ):
+        raise TypeError(&#39;norm mora biti klase bool.&#39;)
+    if norm not in {0, False, 1, True}:
+        raise ValueError(&#39;norm mora biti laz/istina.&#39;)
+    try:
+        norm = _copy.deepcopy(bool(norm))
+    except (TypeError, ValueError):
+        raise TypeError(&#39;norm mora biti klase bool.&#39;)
 
     # Izračunaj prvih Z.shape[-1] elemenata geometrijskog niza s koeficijentom
     # 1 - theta.
-    theta = _np.flip(
-        _np.array(
-            [_theta ** n for n in iter(range(int(Z.shape[-1])))],
-            dtype = float,
-            order = &#39;F&#39;
-        )
-    ).copy(order = &#39;A&#39;)
+    _theta = _np.flip(
+        (1.0 - theta) ** _np.arange(Z.shape[-1], dtype = int)
+    ).copy(order = &#39;F&#39;)
 
-    # Vrati traženu sumu.
-    return (
-        theta.reshape(
+    # Izračunaj kompresijsku sumu.
+    Z_compressed = (
+        _theta.reshape(
             tuple(
                 _np.concatenate(
                     (_np.ones(Z.ndim - 1, dtype = int), [Z.shape[-1]])
                 ).tolist()
             )
         ) * Z
-    ).sum(axis = -1)</code></pre>
+    ).sum(axis = -1).copy(order = &#39;F&#39;)
+
+    # Ako je norm istina, podijeli kompresijsku sumu sa _theta.sum().
+    if norm:
+        Z_compressed /= _theta.sum()
+
+    # Po potrebi pretvori Z u skalar.
+    if isinstance(Z, _np.ndarray):
+        if Z.shape == tuple():
+            Z = Z.dtype.type(Z)
+
+    # Vrati kompresijsku sumu.
+    return Z_compressed</code></pre>
 </details>
 </dd>
 <dt id="tlp.t_Katz_score"><code class="name flex">
@@ -2438,7 +2539,7 @@ array([[-0.462, -0.293, -0.748, -0.474],
 </code></pre>
 <p>Katzova ocijena neusmjerenog grafa bez težina.</p>
 <pre><code>&gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
-&gt;&gt;&gt; X = (X + X.T) / 2
+&gt;&gt;&gt; X += X.T
 &gt;&gt;&gt; X /= np.abs(X).max()
 &gt;&gt;&gt; X.round(3)
 array([[-0.   ,  0.   , -0.   , -1.   ],
@@ -2495,7 +2596,7 @@ array([[-0.699,  0.699],
 <p>Dekompozicija Katzove ocijene neusmjerenog grafa s težinama.</p>
 <h2 id="zabiljeske">Zabilješke</h2>
 <p>Za opisane povratne vrijednosti, vrijedi
-<code>score_k = W_k @ np.diag(gamma_k) @ W_k.T</code>.</p></section>
+<code>score_k == W_k @ np.diag(gamma_k) @ W_k.T</code>.</p></section>
 <details class="source">
 <summary>Source code</summary>
 <pre><code class="python">def t_Katz_score (X, beta = 0.5, k = None, compute = True):
@@ -2602,7 +2703,7 @@ array([[-0.699,  0.699],
     Katzova ocijena neusmjerenog grafa bez težina.
 
     &gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
-    &gt;&gt;&gt; X = (X + X.T) / 2
+    &gt;&gt;&gt; X += X.T
     &gt;&gt;&gt; X /= np.abs(X).max()
     &gt;&gt;&gt; X.round(3)
     array([[-0.   ,  0.   , -0.   , -1.   ],
@@ -2646,7 +2747,7 @@ array([[-0.699,  0.699],
     Zabilješke
     ----------
     Za opisane povratne vrijednosti, vrijedi
-    `score_k = W_k @ np.diag(gamma_k) @ W_k.T`.
+    `score_k == W_k @ np.diag(gamma_k) @ W_k.T`.
 
     &#34;&#34;&#34;
 
@@ -2724,8 +2825,8 @@ array([[-0.699,  0.699],
     # Izračunaj dekompoziciju Katzove ocijene.
     l, W = _np.linalg.eig(X)
     I = _np.flip(_np.argsort(_np.abs(l))).copy(order = &#39;F&#39;)
-    l = l[I].copy(order = &#39;F&#39;)
-    W = W[:, I].copy(order = &#39;F&#39;)
+    l = _np.array(l[I], copy = True, order = &#39;F&#39;)
+    W = _np.array(W[:, I], copy = True, order = &#39;F&#39;)
     del I
     if k is None:
         k = (
@@ -2738,10 +2839,7 @@ array([[-0.699,  0.699],
     # Vrati Katzovu ocijenu ili njezinu dekompoziciju ovisno o vrijednosti
     # parametra compute.
     return _np.matmul(
-        _np.matmul(
-            W,
-            _np.diag((1.0 - beta * l) ** -1 - 1.0).copy(order = &#39;F&#39;)
-        ).copy(order = &#39;F&#39;),
+        ((1.0 - beta * l) ** -1 - 1.0).copy(order = &#39;F&#39;) * W,
         W.T.copy(order = &#39;F&#39;)
     ).copy(order = &#39;F&#39;) if compute else ((1.0 - beta * l) ** -1 - 1.0, W)</code></pre>
 </details>
@@ -2804,52 +2902,53 @@ parametar <code>compute</code> nije laž/istina.</dd>
 <dd>Iznimke izbačene pozivom <code>tl.partial_svd(...)</code> ne hvataju se.</dd>
 </dl>
 <h2 id="primjeri">Primjeri</h2>
-<pre><code>&gt;&gt;&gt; X = [[ 1,  5,  0],
-...      [-2,  4,  0],
-...      [ 0, -1, -1]]
-&gt;&gt;&gt; tsvd(X, 1).round(3)
-array([[-0.393,  4.885,  0.118],
+<pre><code>&gt;&gt;&gt; X = [[ 1,  5,  0, -2],
+...      [-2,  4,  0,  1],
+...      [ 0, -1, -1,  0]]
+&gt;&gt;&gt; tsvd(X).round(3)
+array([[ 1.,  5., -0., -2.],
 
 
-   [-0.333,  4.132,  0.1  ],
-   [ 0.082, -1.017, -0.025]])
+   [-2.,  4.,  0.,  1.],
+   [ 0., -1., -1., -0.]])
 
-&gt;&gt;&gt; tsvd(X, 2).round(3)
-array([[ 0.997,  4.996,  0.148],
-
-
-   [-2.001,  3.998,  0.065],
-   [-0.019, -1.025, -0.027]])
-
-&gt;&gt;&gt; tsvd(X, 3).round(3)
-array([[ 1.,  5., -0.],
+&gt;&gt;&gt; tsvd(X, k = 1).round(3)
+array([[-0.321,  5.1  ,  0.121, -0.769],
 
 
-   [-2.,  4., -0.],
-   [-0., -1., -1.]])
+   [-0.243,  3.869,  0.092, -0.584],
+   [ 0.063, -0.997, -0.024,  0.15 ]])
+
+&gt;&gt;&gt; tsvd(X, k = 2).round(3)
+array([[ 1.012,  5.   ,  0.108, -1.988],
+
+
+   [-1.988,  4.   ,  0.108,  1.012],
+   [ 0.108, -1.   , -0.024,  0.108]])
 </code></pre>
-<p>Rekompozicija matrice.
-Matrica <code>X</code> ne mora biti kvadratna kao u primjeru
-(analogni pozivi koriste se i za ne-kvadratne matrice).</p>
-<pre><code>&gt;&gt;&gt; U, s, V = tsvd(X, 2, compute = False)
+<p>Rekompozicija matrice.</p>
+<pre><code>&gt;&gt;&gt; U, s, V = tsvd(X, k = 2, compute = False)
 &gt;&gt;&gt; U.round(3)
-array([[ 0.754, -0.639],
+array([[-0.787, -0.607],
 
 
-   [ 0.638,  0.767],
-   [-0.157,  0.046]])
+   [-0.597,  0.794],
+   [ 0.154, -0.021]])
 
 &gt;&gt;&gt; s.round(3)
-array([6.501, 2.182])
+array([6.566, 2.98 ])
 &gt;&gt;&gt; V.round(3)
-array([[-0.08 ,  0.996,  0.024],
+array([[ 0.062, -0.737],
 
 
-   [-0.997, -0.08 , -0.021]])
+   [-0.987,  0.055],
+   [-0.023,  0.007],
+   [ 0.149,  0.674]])
 </code></pre>
 <p>Dekompozicija matrice <code>X</code>.</p>
 <h2 id="zabiljeske">Zabilješke</h2>
-<p>Za opisane povratne vrijednosti, vrijedi <code>X_k = U_k @ np.diag(s_k) @ V_k.T</code>.</p></section>
+<p>Za opisane povratne vrijednosti, vrijedi
+<code>X_k == U_k @ np.diag(s_k) @ V_k.T</code>.</p></section>
 <details class="source">
 <summary>Source code</summary>
 <pre><code class="python">def tsvd (X, k = None, compute = True):
@@ -2912,41 +3011,43 @@ array([[-0.08 ,  0.996,  0.024],
 
     Primjeri
     --------
-    &gt;&gt;&gt; X = [[ 1,  5,  0],
-    ...      [-2,  4,  0],
-    ...      [ 0, -1, -1]]
-    &gt;&gt;&gt; tsvd(X, 1).round(3)
-    array([[-0.393,  4.885,  0.118],
-           [-0.333,  4.132,  0.1  ],
-           [ 0.082, -1.017, -0.025]])
-    &gt;&gt;&gt; tsvd(X, 2).round(3)
-    array([[ 0.997,  4.996,  0.148],
-           [-2.001,  3.998,  0.065],
-           [-0.019, -1.025, -0.027]])
-    &gt;&gt;&gt; tsvd(X, 3).round(3)
-    array([[ 1.,  5., -0.],
-           [-2.,  4., -0.],
-           [-0., -1., -1.]])
+    &gt;&gt;&gt; X = [[ 1,  5,  0, -2],
+    ...      [-2,  4,  0,  1],
+    ...      [ 0, -1, -1,  0]]
+    &gt;&gt;&gt; tsvd(X).round(3)
+    array([[ 1.,  5., -0., -2.],
+           [-2.,  4.,  0.,  1.],
+           [ 0., -1., -1., -0.]])
+    &gt;&gt;&gt; tsvd(X, k = 1).round(3)
+    array([[-0.321,  5.1  ,  0.121, -0.769],
+           [-0.243,  3.869,  0.092, -0.584],
+           [ 0.063, -0.997, -0.024,  0.15 ]])
+    &gt;&gt;&gt; tsvd(X, k = 2).round(3)
+    array([[ 1.012,  5.   ,  0.108, -1.988],
+           [-1.988,  4.   ,  0.108,  1.012],
+           [ 0.108, -1.   , -0.024,  0.108]])
 
-    Rekompozicija matrice.  Matrica `X` ne mora biti kvadratna kao u primjeru
-    (analogni pozivi koriste se i za ne-kvadratne matrice).
+    Rekompozicija matrice.
 
-    &gt;&gt;&gt; U, s, V = tsvd(X, 2, compute = False)
+    &gt;&gt;&gt; U, s, V = tsvd(X, k = 2, compute = False)
     &gt;&gt;&gt; U.round(3)
-    array([[ 0.754, -0.639],
-           [ 0.638,  0.767],
-           [-0.157,  0.046]])
+    array([[-0.787, -0.607],
+           [-0.597,  0.794],
+           [ 0.154, -0.021]])
     &gt;&gt;&gt; s.round(3)
-    array([6.501, 2.182])
+    array([6.566, 2.98 ])
     &gt;&gt;&gt; V.round(3)
-    array([[-0.08 ,  0.996,  0.024],
-           [-0.997, -0.08 , -0.021]])
+    array([[ 0.062, -0.737],
+           [-0.987,  0.055],
+           [-0.023,  0.007],
+           [ 0.149,  0.674]])
 
     Dekompozicija matrice `X`.
 
     Zabilješke
     ----------
-    Za opisane povratne vrijednosti, vrijedi `X_k = U_k @ np.diag(s_k) @ V_k.T`.
+    Za opisane povratne vrijednosti, vrijedi
+    `X_k == U_k @ np.diag(s_k) @ V_k.T`.
 
     &#34;&#34;&#34;
 
@@ -3015,21 +3116,21 @@ array([[-0.08 ,  0.996,  0.024],
             1 if _np.isclose(1.0, 1.0 + s[0])
                 else int((~_np.isclose(1.0, 1.0 + s / s[0])).sum())
         )
-        U = U[:, :k].copy(order = &#39;F&#39;)
-        s = s[:k].copy(order = &#39;F&#39;)
-        V = V[:k, :].copy(order = &#39;F&#39;)
+        U = _np.array(U[:, :k], copy = True, order = &#39;F&#39;)
+        s = _np.array(s[:k], copy = True, order = &#39;F&#39;)
+        V = _np.array(V[:k, :].T, copy = True, order = &#39;F&#39;)
     else:
         U, s, V = _tl.partial_svd(X, n_eigenvecs = k)
-        U = U.copy(order = &#39;F&#39;)
-        s = s.copy(order = &#39;F&#39;)
-        V = V.copy(order = &#39;F&#39;)
+        U = _np.array(U, copy = True, order = &#39;F&#39;)
+        s = _np.array(s, copy = True, order = &#39;F&#39;)
+        V = _np.array(V.T, copy = True, order = &#39;F&#39;)
 
     # Vrati dekompoziciju ili rekompoziciju ovisno o vrijednosti parametra
     # compute.
-    return _np.matmul(
-        _np.matmul(U, _np.diag(s).copy(order = &#39;F&#39;)).copy(order = &#39;F&#39;),
-        V
-    ).copy(order = &#39;F&#39;) if compute else (U, s, V)</code></pre>
+    return (
+        _np.matmul(s * U, V.T.copy(order = &#39;F&#39;)).copy(order = &#39;F&#39;) if compute
+            else (U, s, V)
+    )</code></pre>
 </details>
 </dd>
 </dl>
