@@ -21,7 +21,7 @@ import tensorLy as tl
 from tlp import *
 ```
 
-##  Bibliografija
+##  Literatura
 
 1.  <a class=\"anchor\" id=\"bib-dunlavy-10\"></a> D. M. Dunlavy, T. G. Kolda, E.
     Acar, *Temporal Link Prediction using Matrix and Tensor Factorizations*,
