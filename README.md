@@ -2,7 +2,7 @@
 
 Predviđanje veza u mreži kroz vrijeme (*temporal link prediction*).
 
-***Uputa.*** Otvori [*html/tlp.html*](html/tlp.html) u internetskom pregledniku.
+***Uputa.*** Otvori [*doc/tlp.html*](doc/tlp.html) u internetskom pregledniku.
 
 ##  Bibliografija
 
