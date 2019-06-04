@@ -478,7 +478,7 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
 
     Katzova ocijena neusmjerenog grafa bez težina.
 
-    >>> X = X * [(-2.0) ** -i for i in range(1, 5)]
+    >>> X = X * [-2.0 ** -i for i in range(1, 5)]
     >>> X += X.T
     >>> X /= np.abs(X).max()
     >>> X.round(3)
@@ -730,7 +730,7 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
 
     Katzova ocijena bipartitnog grafa bez težina.
 
-    >>> X = X * [(-2.0) ** -i for i in range(1, 5)]
+    >>> X = X * [-2.0 ** -i for i in range(1, 5)]
     >>> X /= np.abs(X).max()
     >>> X
     array([[-0.   ,  0.   , -0.25 ,  0.125],

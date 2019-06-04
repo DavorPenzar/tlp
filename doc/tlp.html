@@ -523,7 +523,7 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
 
     Katzova ocijena neusmjerenog grafa bez težina.
 
-    &gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
+    &gt;&gt;&gt; X = X * [-2.0 ** -i for i in range(1, 5)]
     &gt;&gt;&gt; X += X.T
     &gt;&gt;&gt; X /= np.abs(X).max()
     &gt;&gt;&gt; X.round(3)
@@ -775,7 +775,7 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
 
     Katzova ocijena bipartitnog grafa bez težina.
 
-    &gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
+    &gt;&gt;&gt; X = X * [-2.0 ** -i for i in range(1, 5)]
     &gt;&gt;&gt; X /= np.abs(X).max()
     &gt;&gt;&gt; X
     array([[-0.   ,  0.   , -0.25 ,  0.125],
@@ -1378,7 +1378,7 @@ array([[ 0.255, -0.246, -0.369, -0.114],
    [ 1.012, -0.625, -0.87 ,  0.142]])
 </code></pre>
 <p>Katzova ocijena bipartitnog grafa bez težina.</p>
-<pre><code>&gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
+<pre><code>&gt;&gt;&gt; X = X * [-2.0 ** -i for i in range(1, 5)]
 &gt;&gt;&gt; X /= np.abs(X).max()
 &gt;&gt;&gt; X
 array([[-0.   ,  0.   , -0.25 ,  0.125],
@@ -1553,7 +1553,7 @@ array([[-0.991, -0.049],
 
     Katzova ocijena bipartitnog grafa bez težina.
 
-    &gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
+    &gt;&gt;&gt; X = X * [-2.0 ** -i for i in range(1, 5)]
     &gt;&gt;&gt; X /= np.abs(X).max()
     &gt;&gt;&gt; X
     array([[-0.   ,  0.   , -0.25 ,  0.125],
@@ -2538,7 +2538,7 @@ array([[-0.462, -0.293, -0.748, -0.474],
    [-0.474, -0.748, -0.767, -1.21 ]])
 </code></pre>
 <p>Katzova ocijena neusmjerenog grafa bez težina.</p>
-<pre><code>&gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
+<pre><code>&gt;&gt;&gt; X = X * [-2.0 ** -i for i in range(1, 5)]
 &gt;&gt;&gt; X += X.T
 &gt;&gt;&gt; X /= np.abs(X).max()
 &gt;&gt;&gt; X.round(3)
@@ -2702,7 +2702,7 @@ array([[-0.699,  0.699],
 
     Katzova ocijena neusmjerenog grafa bez težina.
 
-    &gt;&gt;&gt; X = X * [(-2.0) ** -i for i in range(1, 5)]
+    &gt;&gt;&gt; X = X * [-2.0 ** -i for i in range(1, 5)]
     &gt;&gt;&gt; X += X.T
     &gt;&gt;&gt; X /= np.abs(X).max()
     &gt;&gt;&gt; X.round(3)
