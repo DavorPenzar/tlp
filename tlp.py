@@ -5,10 +5,19 @@ Funkcije za predviđanje veza u mreži kroz vrijeme.
 
 ##  Zavisnosti
 
-1.  [NumPy](http://numpy.org/) &ndash; tenzori su reprezentirani kao objekti
-    klase `numpy.ndarray`.
-2.  [TensorLy](http://tensorly.org/) &ndash; dekompozicija tenzora realizirana
-    je metodama iz biblioteke paketa TensorLy.
+Kod je izvršiv samo u ***Python* 3** okruženju zbog svojih zavisnosti.
+
+1.  standardna *Python* biblioteka:
+    1.  [copy](http://docs.python.org/3/library/copy.html),
+    2.  [functools](http://docs.python.org/3/library/functools.html),
+    3.  [math](http://docs.python.org/3/library/math.html),
+    4.  [numbers](http://docs.python.org/3/library/numbers.html),
+2.  ostali paketi:
+    1.  [NumPy](http://numpy.org/) &ndash; tenzori su reprezentirani kao objekti
+        klase `numpy.ndarray`.
+    2.  [TensorLy](http://tensorly.org/) &ndash; dekompozicija tenzora
+        realizirana je metodama iz biblioteke paketa *TensorLy* (taj je paket
+        podržan samo za *Python* 3 okruženje).
 
 ##  Napomene
 
@@ -57,7 +66,7 @@ def cwt (Z, theta = 0.5, norm = False):
     Z : array
         Tenzor numeričkih vrijednosti čiji se *CWT* računa.
 
-    theta : [0 to 1), optional
+    theta : float in range [0 to 1), optional
         Parametar *gubitka* relevantnosti stanja kroz vrijeme (zadana vrijednost
         je 0.5).
 
@@ -167,29 +176,21 @@ def cwt (Z, theta = 0.5, norm = False):
 
     # Izračunaj prvih Z.shape[-1] elemenata geometrijskog niza s koeficijentom
     # 1 - theta.
-    _theta = _np.flip(
+    one_min_theta = _np.flip(
         (1.0 - theta) ** _np.arange(Z.shape[-1], dtype = int)
     ).copy(order = 'F')
 
     # Izračunaj kompresijsku sumu.
-    Z_compressed = (
-        _theta.reshape(
-            tuple(
-                _np.concatenate(
-                    (_np.ones(Z.ndim - 1, dtype = int), [Z.shape[-1]])
-                ).tolist()
-            )
-        ) * Z
-    ).sum(axis = -1).copy(order = 'F')
+    Z_compressed = (one_min_theta * Z).sum(axis = -1).copy(order = 'F')
 
     # Ako je norm istina, podijeli kompresijsku sumu sa _theta.sum().
     if norm:
-        Z_compressed /= _theta.sum()
+        Z_compressed /= one_min_theta.sum()
 
     # Po potrebi pretvori Z u skalar.
-    if isinstance(Z, _np.ndarray):
-        if Z.shape == tuple():
-            Z = Z.dtype.type(Z)
+    if isinstance(Z_compressed, _np.ndarray):
+        if Z_compressed.shape == tuple():
+            Z_compressed = Z_compressed.dtype.type(Z_compressed)
 
     # Vrati kompresijsku sumu.
     return Z_compressed
@@ -205,7 +206,7 @@ def tsvd (X, k = None, compute = True):
     X : (M, N) array
         Matrica numeričkih definiranih i konačnih vrijednosti.
 
-    k : None or int in [1, min(M, N)], optional
+    k : None or int in range [1, min(M, N)], optional
         Broj singularnih vrijednosti matrice X na za računanje ocijene (zadana
         vrijednost je `None`).  Ako je `None`, uzima se
 
@@ -234,7 +235,7 @@ def tsvd (X, k = None, compute = True):
         `k` najvećih singularnih vrijednosti (poredanih u silaznom poretku). Ova
         se povratna vrijednost vraća ako je `compute` laž.
 
-    V_k : (k, M) array
+    V_k : (N, k) array
         Ortogonalna matrica.  Ova se povratna vrijednost vraća ako je `compute`
         laž.
 
