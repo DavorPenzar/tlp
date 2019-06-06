@@ -143,6 +143,8 @@ def cwt (Z, theta = 0.5, norm = False):
         raise ValueError('Z mora biti barem jednodimenzionalni tenzor.')
     if not Z.size:
         raise ValueError('Z mora biti neprazni tenzor.')
+    if isinstance(Z, _np.matrix):
+        Z = Z.A
     if issubclass(
         Z.dtype.type,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
@@ -1051,6 +1053,8 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
         raise ValueError(
             'Z mora sadrzavati samo definirane i konacne vrijednosti.'
         )
+    if isinstance(Z, _np.matrix):
+        Z = Z.A
     if issubclass(
         Z.dtype.type,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)

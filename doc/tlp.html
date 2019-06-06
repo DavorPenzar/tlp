@@ -200,6 +200,8 @@ def cwt (Z, theta = 0.5, norm = False):
         raise ValueError(&#39;Z mora biti barem jednodimenzionalni tenzor.&#39;)
     if not Z.size:
         raise ValueError(&#39;Z mora biti neprazni tenzor.&#39;)
+    if isinstance(Z, _np.matrix):
+        Z = Z.A
     if issubclass(
         Z.dtype.type,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
@@ -1108,6 +1110,8 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
         raise ValueError(
             &#39;Z mora sadrzavati samo definirane i konacne vrijednosti.&#39;
         )
+    if isinstance(Z, _np.matrix):
+        Z = Z.A
     if issubclass(
         Z.dtype.type,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
@@ -2056,6 +2060,8 @@ primjer mogao realizirati također koristeći <code>lambda</code> funkciju).</p>
         raise ValueError(
             &#39;Z mora sadrzavati samo definirane i konacne vrijednosti.&#39;
         )
+    if isinstance(Z, _np.matrix):
+        Z = Z.A
     if issubclass(
         Z.dtype.type,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
@@ -2373,6 +2379,8 @@ array([[ 1.5,  3.5,  5.5,  7.5],
         raise ValueError(&#39;Z mora biti barem jednodimenzionalni tenzor.&#39;)
     if not Z.size:
         raise ValueError(&#39;Z mora biti neprazni tenzor.&#39;)
+    if isinstance(Z, _np.matrix):
+        Z = Z.A
     if issubclass(
         Z.dtype.type,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
