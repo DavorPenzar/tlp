@@ -32,9 +32,13 @@ from tlp import *
 
 ##  Literatura
 
-1.  <a class=\"anchor\" id=\"bib-dunlavy-10\"></a> D. M. Dunlavy, T. G. Kolda, E.
-    Acar, *Temporal Link Prediction using Matrix and Tensor Factorizations*,
+1.  <a class=\"anchor\" id=\"bib-dunlavy-10\"></a> D. M. Dunlavy, T. G. Kolda,
+    E. Acar, *Temporal Link Prediction using Matrix and Tensor Factorizations*,
     2010, arXiv: [1005.4006 [math.NA]](http://arxiv.org/abs/1005.4006).
+2.  <a class=\"anchor\" id=\"bib-trubetskoy-16\"></a> G. Trubetskoy,
+    Holt-Winters Forecasting for Dummies - Part III, dostupno na
+    [http://grisha.org/blog/2016/02/17/triple-exponential-smoothing-forecasting-part-iii/](http://grisha.org/blog/2016/02/17/triple-exponential-smoothing-forecasting-part-iii/),
+    (lipanj 2019.).
 
 """
 
@@ -55,6 +59,375 @@ from tensorly.decomposition import parafac as _parafac
 if _tl.get_backend() != 'numpy':
     _tl.set_backend('numpy')
 
+class ExponentialSmooth (object):
+    """
+    Prognoza numeričkih podataka trostrukim eksponencijalnim izglađivanjem.
+
+    Prognoza se računa formulama opisanim u [[2](#bib-trubetskoy-16)].
+
+    """
+
+    def __new__ (cls):
+        # Saniraj parametar cls.
+        if not issubclass(cls, ExponentialSmooth):
+            raise TypeError('cls mora biti ExponentialSmooth.')
+
+        # Kreiraj novi objekt klase ExponentialSmooth.
+        instance = super(ExponentialSmooth, cls).__new__(cls)
+
+        # Vrati novi objekt.
+        return instance
+
+    def __init__ (self):
+        # Saniraj parametar self.
+        if not isinstance(self, ExponentialSmooth):
+            raise TypeError('self mora biti klase ExponentialSmooth.')
+
+        # Inicijaliziraj self.
+        super(ExponentialSmooth, self).__init__()
+
+        # Inicijaliziraj atribute objekta self.
+        self._a = _np.zeros(tuple([0]), dtype = float, order = 'F')
+        self._n = 0
+        self._b = 0.0
+        self._s = _np.zeros(tuple([0]), dtype = float, order = 'F')
+
+    def __copy__ (self):
+        # Saniraj parametar self.
+        if not isinstance(self, ExponentialSmooth):
+            raise TypeError('self mora biti klase ExponentialSmooth.')
+
+        # Kreiraj novi objekt klase ExponentialSmooth.
+        instance = ExponentialSmooth()
+
+        # Postavi atribute novog objekta na atribute objekta self.
+        instance._a = self._a
+        instance._n = self._n
+        instance._b = self._b
+        instance._s = self._s
+
+        # Vrati novi objekt.
+        return instance
+
+    def __deepcopy__ (self, memo = dict()):
+        # Saniraj parametar self.
+        if not isinstance(self, ExponentialSmooth):
+            raise TypeError('self mora biti klase ExponentialSmooth.')
+
+        # Kreiraj novi objekt klase ExponentialSmooth.
+        instance = ExponentialSmooth()
+
+        # Kopiraj atribute objekta self u atribute novog objekta.
+        instance._a = _copy.deepcopy(self._a, memo)
+        instance._n = _copy.deepcopy(self._n, memo)
+        instance._b = _copy.deepcopy(self._b, memo)
+        instance._s = _copy.deepcopy(self._s, memo)
+
+        # Vrati novi objekt.
+        return instance
+
+    def __repr__ (self):
+        # Saniraj parametar self.
+        if not isinstance(self, ExponentialSmooth):
+            raise TypeError('self mora biti klase ExponentialSmooth.')
+
+        # Vrati tekstualnu reprezentaciju objekta self.
+        return '<{class_name:s}: ({series_shape:s}; {season_length:d})>'.format(
+            class_name = self.__class__.__name__,
+            series_shape = repr(tuple(self._a.shape)),
+            season_length = self._n
+        )
+
+    def fit (self, a, n):
+        """
+        Pripremi prognoziranje vrijednosti tenzora `a` s periodom duljine `n`.
+
+        Parametri
+        ---------
+        a : array
+            Tenzor čije prognoze će se računati (po zadnjoj dimenziji).
+
+        n : int in range [1, a.shape[-1] // 2]
+            Duljina perioda u tenzoru `a`.
+
+        Povratne vrijednosti
+        --------------------
+        self : ExponentialSmooth
+            Povratna vrijednost je `self`.
+
+        Iznimke
+        -------
+        TypeError
+            Parametar `a` nije nije tenzor numeričkih vrijednosti, parametar `n`
+            nije vijeli broj.
+
+        ValueError
+            Parametar `a` je prazni tenzor, sadrži nedefinrane ili beskonačne
+            vrijednosti, parametar `n` nije u intervalu [1, `a.shape[-1] // 2`].
+
+        """
+
+        # Saniraj parametar self.
+        if not isinstance(self, ExponentialSmooth):
+            raise TypeError('self mora biti klase ExponentialSmooth.')
+
+        # Saniraj parametar a.
+        if not isinstance(a, _np.ndarray):
+            if not (hasattr(a, '__iter__') or hasattr(a, '__array__')):
+                raise TypeError('a mora biti klase numpy.ndarray.')
+            try:
+                a = _np.array(a)
+            except (TypeError, ValueError, AttributeError):
+                raise TypeError('a mora biti klase numpy.ndarray.')
+        if not issubclass(
+            a.dtype.type,
+            (_numbers.Complex, int, bool, _np.bool, _np.bool8, _np.bool_)
+        ):
+            raise TypeError('a mora biti tenzor numerickih vrijednosti.')
+        if not a.ndim:
+            raise ValueError('a mora biti barem jednodimenzionalni tenzor.')
+        if not a.size:
+            raise ValueError('a mora biti neprazni tenzor.')
+        if (_np.isnan(a) | _np.isinf(a)).any():
+            raise ValueError(
+                'a mora sadrzavati samo definirane i konacne vrijednosti.'
+            )
+        if isinstance(a, _np.matrix):
+            a = a.A
+
+        # Saniraj parametar n.
+        if not isinstance(n, _numbers.Integral):
+            raise TypeError('n mora biti klase int.')
+        try:
+            n = _copy.deepcopy(int(n))
+        except (TypeError, ValueError, AttributeError):
+            raise TypeError('n mora biti klase int.')
+        if n <= 0:
+            raise ValueError('n mora biti strogo pozitivan.')
+        if n > a.shape[-1] // 2:
+            raise ValueError('n ne smije biti veci od a.shape[-1] // 2.')
+
+        # Spremi kopije parametara u atribute objekta self.  Jednostavnosti
+        # računa radi, posljednja dimenzija tenzora a prebacuje se na prvo
+        # mjesto.
+        self._a = _np.moveaxis(a, -1, 0).copy(order = 'F')
+        self._n = _copy.deepcopy(n)
+
+        # Izračunaj pomoćne varijable broj cijelih perioda u tenzoru a i srednje
+        # vrijednosti perioda.
+        N = int(_math.floor(float(self._a.shape[0]) / self._n))
+        avg = _np.array(
+            [
+                self._a[
+                    i * self._n:_np.minimum((i + 1) * self._n, self._a.shape[0])
+                ].mean(axis = 0) for i in iter(range(N))
+            ],
+            order = 'F'
+        )
+
+        # Izračunaj (i spremi u atribute objekta self) inicijalni trend i
+        # inicijalne sezonalne komponente tenzora a.
+        self._b = (
+            (self._a[self._n:2 * self._n] - self._a[:self._n]).sum() /
+            float(self._n) ** 2
+        )
+        if isinstance(self._b, _np.ndarray):
+            if self._b.shape == tuple():
+                self._b = self._b.dtype.type(self._b)
+        self._s = _np.array(
+            [
+                (self._a[i:N * self._n:self._n] - avg).sum(axis = 0)
+                    for i in iter(range(self._n))
+            ],
+            order = 'F'
+        ) / float(N)
+
+        # Vrati self.
+        return self
+
+    def predict (self, k = 1, theta = 0.5):
+        """
+        Predvidi vrijednosti tenzora.
+
+        Parametri
+        ---------
+        k : int in range [1, +inf), optional
+            Broj vrijednosti koje se predviđa (zadana vrijednost je 1).
+
+        theta : float in range [0, 1] or tuple of 3 floats in range [0, 1]
+            Parametri eksponencijalnog izglađivanja (zadana vrijednost je 0.5).
+            Ako je jedinstvena vrijednost, uzima se
+            `theta = (theta, theta, theta)`.  Vrijednost `theta[0]` koeficijent
+            je izglađivanja visine, vrijednost `theta[1]` koeficijent je
+            izglađivanja trenda, a vrijednost `theta[2]` je koeficijent
+            izglađivanja sezonalnih komponenti.
+
+        Povratne vrijednosti
+        --------------------
+        y : array
+            Predviđenih `k` vrijednosti tenzora `a`.  Prvih `a.ndim - 1`
+            dimenzija jednakih je veličina kao tenzora `a`, a posljednja
+            dimenzija je veličine `k`.  Ako je `k == 1`, onda je povratna
+            vrijednost dimenzionalnosti `a.ndim - 1`.  Ako je `a`
+            jednodimenzionalni tenzor i `k == 1`, onda je povratna vrijednost
+            skalar.
+
+        Iznimke
+        -------
+        TypeError
+            Parametar `k` nije realni broj, parametar `theta` sadrži vrijednost
+            koja nije realni broj.
+
+        ValueError
+            Parametar `k` nije u intervalu [1, +inf), parametar `theta` sadrži
+            vrijednost koja nije u intervalu [0, 1].
+
+        """
+
+        # Saniraj parametar self.
+        if not isinstance(self, ExponentialSmooth):
+            raise TypeError('self mora biti klase ExponentialSmooth.')
+
+        # Saniraj parametar k.
+        if not isinstance(k, _numbers.Integral):
+            raise TypeError('k mora biti klase int.')
+        try:
+            k = _copy.deepcopy(int(k))
+        except (TypeError, ValueError, AttributeError):
+            raise TypeError('k mora biti klase int.')
+        if k <= 0:
+            raise ValueError('k mora biti strogo pozitivan.')
+
+        # Saniraj parametar theta.
+        if not isinstance(theta, tuple):
+            theta = _copy.deepcopy((theta, theta, theta))
+        if len(theta) != 3:
+            raise ValueError('theta mora biti troclani tuple.')
+        theta = list(theta)
+        for i in iter(range(3)):
+            if not (isinstance(theta[i], _numbers.Real)):
+                raise TypeError('theta mora biti klase float.')
+            try:
+                theta[i] = _copy.deepcopy(float(theta[i]))
+            except (TypeError, ValueError, AttributeError):
+                raise TypeError('theta mora biti klase float.')
+            if _math.isnan(theta[i]) or _math.isinf(theta[i]):
+                raise ValueError('theta ne smije biti NaN ili beskonacno.')
+            if theta[i] < 0.0 or theta[i] > 1.0:
+                raise ValueError('theta mora biti u intervalu [0, 1].')
+        theta = tuple(theta)
+
+        # Izračunaj 1 - theta po komponentama.
+        one_min_theta = (1.0 - theta[0], 1.0 - theta[1], 1.0 - theta[2])
+
+        # Eksponencijalnim izglađivanjem izračunaj tenzor y duljine
+        # a.shape[-1] + k.
+        y = None
+        if self._a.ndim == 1:
+            y = _np.zeros(self._a.size + k, dtype = self._s.dtype, order = 'F')
+        else:
+            y = _np.zeros(
+                tuple(
+                    _np.concatenate(
+                        ([self._a.shape[0] + k], self._a.shape[1:])
+                    ).tolist()
+                ),
+                dtype = self._s.dtype,
+                order = 'F'
+        )
+        b = _copy.deepcopy(self._b)
+        s = _copy.deepcopy(self._s)
+        l = (_copy.deepcopy(self._a[0]), _copy.deepcopy(self._a[0]))
+        for i in iter(range(1, int(self._a.shape[0]))):
+            val = _copy.deepcopy(self._a[i])
+            l = (
+                l[1],
+                (
+                    theta[0] * (val - s[i % self._n]) +
+                    one_min_theta[0] * (l[1] + b)
+                )
+            )
+            b = theta[1] * (l[1] - l[0]) + one_min_theta[1] * b
+            s[i % self._n] = (
+                theta[2] * (val - l[1]) + one_min_theta[2] * s[i % self._n]
+            )
+            y[i] = l[1] + b + s[i % self._n]
+        for i in iter(range(int(self._a.shape[0]), int(y.shape[0]))):
+            y[i] = (l[1] + (i - self._a.shape[0] + 1) * b) + s[i % self._n]
+
+        # Spremi samo posljednjih k vrijednosti u tenzoru y.
+        y = y[int(self._a.shape[0]):].copy(order = 'F')
+
+        # Po potrebi pojednostavi dimenzionalnost tenzora y odnosno pretvori ga
+        # u skalar.
+        if isinstance(y, _np.ndarray):
+            if k == 1:
+                if y.ndim == 1:
+                    y = y.dtype.type(y)
+                else:
+                    y.shape = y.shape[1:]
+            else:
+                y = _np.moveaxis(y, 0, -1).copy(order = 'F')
+
+        # Vrati izračunati tenzor y.
+        return y
+
+    @property
+    def series_ (self):
+        """
+        Tenzor čije prognoze se računaju eksponencijalnim izglađivanjem.
+
+        """
+
+        # Saniraj parametar self.
+        if not isinstance(self, ExponentialSmooth):
+            raise TypeError('self mora biti klase ExponentialSmooth.')
+
+        # Vrati tenzor.
+        return _np.moveaxis(self._a, 0, -1).copy(order = 'F')
+
+    @property
+    def season_length_ (self):
+        """
+        Duljina perioda vrijednosti tenzora.
+
+        """
+
+        # Saniraj parametar self.
+        if not isinstance(self, ExponentialSmooth):
+            raise TypeError('self mora biti klase ExponentialSmooth.')
+
+        # Vrati duljinu perioda tenzora.
+        return _copy.deepcopy(self._n)
+
+    @property
+    def initial_trend_ (self):
+        """
+        Inicijalni trend tenzora.
+
+        """
+
+        # Saniraj parametar self.
+        if not isinstance(self, ExponentialSmooth):
+            raise TypeError('self mora biti klase ExponentialSmooth.')
+
+        # Vrati inicijalni trend tenzora.
+        return _copy.deepcopy(self._b)
+
+    @property
+    def initial_seasonal_components_ (self):
+        """
+        Inicijalne sezonalne komponente tenzora.
+
+        """
+
+        # saniraj parametar self.
+        if not isinstance(self, ExponentialSmooth):
+            raise TypeError('self mora biti klase ExponentialSmooth.')
+
+        # Vrati inicijalne sezonalne komponente tenzora.
+        return _copy.deepcopy(self._s)
+
 def cwt (Z, theta = 0.5, norm = False):
     """
     Izračunaj *collapsed weighted tensor* (*CWT*).
@@ -73,12 +446,12 @@ def cwt (Z, theta = 0.5, norm = False):
     norm : boolean, optional
         Ako je istina, povratni tenzor je težinska sredina umjesto obične sume,
         to jest, povratna vrijednost je podijeljena sa
-        `sum((1.0 - theta) ** i for i in range(Z.shape[-1]))` (zadana
-        vrijednost je laž).
+        `sum((1 - theta) ** i for i in range(Z.shape[-1]))` (zadana vrijednost
+        je laž).
 
     Povratne vrijednosti
     --------------------
-    array
+    Z_cwt : array
         *CWT* zadanog tenzora `Z`.  Povratni tenzor dimenzionalnosti je za 1
         manje od tenzora `Z`, a oblikom je jednak obliku `Z.shape[:-1]`.  Ako je
         `Z` jednodimenzionalni tenzor (vektor), povratna vrijednost je skalar.
@@ -209,7 +582,7 @@ def tsvd (X, k = None, compute = True):
         Matrica numeričkih definiranih i konačnih vrijednosti.
 
     k : None or int in range [1, min(M, N)], optional
-        Broj singularnih vrijednosti matrice X na za računanje ocijene (zadana
+        Broj singularnih vrijednosti matrice X za računanje ocijene (zadana
         vrijednost je `None`).  Ako je `None`, uzima se
 
         1.  ako su sve singularne vrijednosti blizu 0, uzima se `k = 1`,
@@ -395,7 +768,7 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
         Koeficijent relevantnosti duljih puteva (zadana vrijednost je 0.5).
 
     k : None or int in range [1, M], optional
-        Broj singularnih vrijednosti matrice X na za računanje ocijene (zadana
+        Broj singularnih vrijednosti matrice X za računanje ocijene (zadana
         vrijednost je `None`).  Ako je `None`, uzima se
 
         1.  ako su sve singularne vrijednosti blizu 0, uzima se `k = 1`,
@@ -418,8 +791,8 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
     gamma_k : (k,) array
         Za konačni niz `l` svojstvenih vrijednosti matrice `X` poredan silazno
         po apsolutnoj vrijednosti, `gamma_k[i]` iznosi
-        `(1.0 - beta * l[i]) ** -1 - 1.0`.  Ova se povratna vrijednost vraća ako
-        je `compute` laž.
+        `(1 - beta * l[i]) ** -1 - 1`.  Ova se povratna vrijednost vraća ako je
+        `compute` laž.
 
     W_k : (M, k) array
         Matrica normiranih stupaca.  Ova se povratna vrijednost vraća ako je
@@ -435,7 +808,7 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
     ValueError
         Parametar `X` je prazni tenzor, nije kvadratna simetrična matrica,
         sadrži nedefinirane ili beskonačne vrijednosti, parametar `beta` nije u
-        intervalu (0, 1), parametar `k` nije u intervalu [1, M], parametar
+        intervalu (0, 1), parametar `k` nije u intervalu [1, `M`], parametar
         `compute` nije laž/istina.
 
     other
@@ -644,7 +1017,7 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
         Koeficijent relevantnosti duljih puteva (zadana vrijednost je 0.5).
 
     k : None or int in range [1, min(M, N)], optional
-        Broj singularnih vrijednosti matrice X na za računanje ocijene (zadana
+        Broj singularnih vrijednosti matrice X za računanje ocijene (zadana
         vrijednost je `None`).  Ako je `None`, uzima se
 
         1.  ako su sve singularne vrijednosti blizu 0, uzima se `k = 1`,
@@ -671,14 +1044,14 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
     psi_m_k : (k,) array
         Za konačni niz `s` singularnih vrijednosti matrice `X` poredan silazno,
         `psi_m_k[i]` iznosi
-        `beta * s[i] / (1.0 - beta ** 2 * s[i] ** 2)`.  Ova se povratna
+        `beta * s[i] * (1 - beta ** 2 * s[i] ** 2) ** -1`.  Ova se povratna
         vrijednost vraća ako je `compute` laž.
 
     psi_p_k : (k,) array
         Za konačni niz `s` singularnih vrijednosti matrice `X` poredan silazno,
         `psi_p_k[i]` iznosi
-        `(1.0 - beta ** 2 * s[i] ** 2) ** -1 - 1.0`.  Ova se povratna
-        vrijednost vraća ako je `compute` laž.
+        `(1 - beta ** 2 * s[i] ** 2) ** -1 - 1`.  Ova se povratna vrijednost
+        vraća ako je `compute` laž.
 
     V_k : (N, k) array
         Ortogonalna matrica.  Ova se povratna vrijednost vraća ako je `compute`
@@ -694,7 +1067,7 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
     ValueError
         Parametar `X` je prazni tenzor, nije matrica, sadrži nedefinirane ili
         beskonačne vrijednosti, parametar `beta` nije u intervalu (0, 1),
-        parametar `k` nije u intervalu [1, M], parametar `compute` nije
+        parametar `k` nije u intervalu [1, `M`], parametar `compute` nije
         laž/istina.
 
     other
@@ -893,7 +1266,7 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
 
     k : None or int in range [1, min(Z.shape)], optional
         Rang komponenti u dekompoziciji tenzora `Z` (zadana vrijednost je
-        `None`).  Ako je None, uzima se `k = min(Z.shape)`.
+        `None`).  Ako je `None`, uzima se `k = min(Z.shape)`.
 
     T0 : None or int in range [1, +inf), optional
         Broj zadnjih stanja koji se uzima u obzir pri predviđanju sljedećih
@@ -903,10 +1276,13 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
     predict : None or callable, optional
         Funkcija za predviđanje sljedećih stanja (zadana vrijednost je `None`).
         Ako nije `None`, funkcija prima komponentu kao objekt klase
-        `numpy.ndarray` oblika `(T0, k)`, a povratna vrijednost mora biti
-        također `numpy.array` oblika `(k,)` ili `(n, k)` za neki `n > 0`
-        (predviđa se `n` sljedećih stanja).  Ako je `None`, uzima se aritmetička
-        sredina po prvoj dimenziji.
+        `numpy.ndarray` oblika `(T0, k)` osim ako je `k == 1` (u tom slučaju je
+        argument `numpy.ndarray` oblika `(T0,)` za `T0 != 1` odnosno jedinstveni
+        skalar za `T0 == 1`), a povratna vrijednost mora biti također
+        `numpy.array` oblika `(k,)` ili `(n, k)` za neki `n > 0` (predviđa se
+        `n` sljedećih stanja); ako je `k == 1`, povratna vrijednost smije biti
+        jedinstveni skalar.  Ako je `None`, uzima se aritmetička sredina po
+        prvoj dimenziji.
 
     compute : boolean, optional
         Ako je laž, povratna vrijednost je dekompozicija *CP* ocijene matrice
@@ -921,8 +1297,8 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
         inače je dimenzionalnosti iste kao `Z`.  Prvih `Z.ndim - 1` dimenzija
         jednakih je kao tenzora `Z`, a, ako `predict` predviđa `n > 1` stanja,
         posljednja dimenzija je veličine `n`.  Ako je predikcija array oblika
-        () ili (1,), povratna vrijednost je skalar.  Ova se povratna vrijednost
-        vraća ako je `compute` istina.
+        `()` ili `(1,)`, povratna vrijednost je skalar.  Ova se povratna
+        vrijednost vraća ako je `compute` istina.
 
     l : (Z.ndim,) array
         Dekomponiramo li tenzor `Z` na tenzore `cp_components` ranga `k` tako da
@@ -939,9 +1315,10 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
 
     p : array
         Rezultat predikcije funkcijom `predict`.  Ako je predikcija rezultirala
-        jednodimenzionalnim nizom, `p` će ipak biti dvodimenzionalan (druga
-        dimenzija je veličine 1).  Ova se povratna vrijednost vraća ako je
-        `compute` laž.
+        jednodimenzionalnim nizom ili skalarom, `p` će ipak biti
+        dvodimenzionalan (druga dimenzija je veličine 1, za skalarnu predikciju
+        će i prva dimenzija biti veličine 1).  Ova se povratna vrijednost vraća
+        ako je `compute` laž.
 
     Iznimke
     -------
@@ -1090,7 +1467,10 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
 
     # Saniraj parametar predict.
     if predict is None:
-        predict = _functools.partial(_np.mean, axis = 0, keepdims = False)
+        if ((T0 is None and Z.shape[-1] == 1) or T0 == 1) and k == 1:
+            predict = lambda x : x
+        else:
+            predict = _functools.partial(_np.mean, axis = 0, keepdims = False)
     if not hasattr(predict, '__call__'):
         raise TypeError(
             'Nacin predikcije mora biti zadan funkcijskim objektom.'
@@ -1120,19 +1500,28 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
             cpd[i] = cpd[i].reshape((cpd[i].size, 1)).copy(order = 'F')
         for k in iter(range(int(l.size))):
             aux_N = _np.linalg.norm(cpd[i][:, k])
-            l[k] *= aux_N
-            cpd[i][:, k] /= aux_N
+            if aux_N:
+                l[k] *= aux_N
+                cpd[i][:, k] /= aux_N
+            else:
+                l[k] = 0
+                cpd[i][:, k] = 0
             del aux_N
 
     # Predvidi vrijednosti posljednje komponente.
     if T0 is not None:
         cpd[-1] = cpd[-1][int(Z.shape[-1] - T0):].copy(order = 'F')
+    if cpd[-1].shape[1] == 1:
+        cpd[-1] = cpd[-1].ravel().copy(order = 'F')
+    if cpd[-1].size == 1:
+        cpd[-1] = cpd[-1].ravel().copy(order = 'F')
+        cpd[-1] = cpd[-1].dtype.type(cpd[-1][0])
     cpd[-1] = predict(cpd[-1])
 
     # Saniraj predikciju posljednje komponente.
     if not isinstance(cpd[-1], _np.ndarray):
         if not (hasattr(cpd[-1], '__iter__') or hasattr(cpd[-1], '__array__')):
-            raise TypeError('Predikcija mora biti klase numpy.ndarray.')
+            cpd[-1] = _np.array([cpd[-1]])
         try:
             cpd[-1] = _np.array(cpd[-1])
         except (TypeError, ValueError):
@@ -1155,7 +1544,10 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
     else:
         cpd[-1]= cpd[-1].reshape((cpd[-1].size, 1)).copy(order = 'C')
     if cpd[-1].shape[0] != l.size:
-        raise ValueError('Predikcija mora biti koliko i komponenti.')
+        if l.size == 1 and cpd[-1].shape[0] != 1:
+            cpd[-1] = cpd[-1].T.copy(order = 'C')
+        else:
+            raise ValueError('Predikcija mora biti koliko i komponenti.')
 
     # Konvertiraj objekt cpd u tuple.
     cpd = tuple(cpd)
@@ -1202,3 +1594,167 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
 
     # Vrati izračunatu predikciju.
     return S
+
+def rand_fft (n, mu = 0.0, sigma = _math.sqrt(0.5)):
+    """
+    Generiraj koeficijente slučajnog jednodimenzionalnog Fourierovog reda.
+
+    Funkcija normalnom distribucijom generira parametar koji se može
+    proslijediti funkcijama `numpy.fft.ifft` i `numpy.fft.irfft` kao
+    koeficijenti jednodimenzionalnog Fourierovog reda.
+
+    Ako su `mu` i `sigma` `tuple`-ovi duljine 2, povratna vrijednost
+    ekvivalentna je pozivu (osim što se za `n == 1` ekstrahira jedinstveni
+    skalar)
+
+    >>> np.array(sigma[0] * np.random.randn(n) + mu[0] + (sigma[1] * np.random.randn(n) + mu[1]) * complex(0.0, 1.0), dtype = complex)
+
+    Parametri
+    ---------
+    n : int in range [0, +inf)
+        Broj koeficijenata koji se generiraju.
+
+    mu : complex or (n,) array or tuple of 2 of such
+        Očekivanje koeficijenata (zadana vrijednost je 0).  Ako je jedinstveni
+        broj ili jedinstveni niz duljine `n`, uzima se `mu = (mu, mu)`.
+
+    sigma : complex or (n,) array or tuple of 2 of such
+        "Standardna devijacija" koeficijenata (zadana vrijednost je
+        sqrt(2) / 2).  Može biti 0, negativno ili čak kompleksni broj s
+        imaginarnim dijelom različitim od 0.  Ako je jedinstveni broj ili
+        jedinstveni niz duljine `n`, uzima se `sigma = (sigma, sigma)`.
+
+    Povratne vrijednosti
+    --------------------
+    F : (n,) array
+        Niz od `n` kompleksnih brojeva čiji su realni i imaginarni dijelovi
+        distribuirani sa zadanim parametrima.  Ako je `n == 1`, povratna
+        vrijednost je skalar.
+
+    Iznimke
+    -------
+    TypeError
+        Parametar `n` nije cijeli broj, parametar `mu` sadrži vrijednost koja
+        nije kompleksni broj, parametar `sigma` sadrži vrijednost koja nije
+        kompleksni broj.
+
+    ValueError
+        Parametar `n` je negativan, parametar `mu` sadrži niz koji nije duljine
+        `n`, parametar `sigma` sadrži niz koji nije duljine `n`, parametar `mu`
+        sadrži nedefinirane ili beskonačne vrijednosti, parametar `sigma` sadrži
+        nedefinirane ili beskonačne vrijednosti.
+
+    """
+
+    # Saniraj parametar n.
+    if not isinstance(n, _numbers.Integral):
+        raise TypeError('n mora biti cijeli broj.')
+    try:
+        n = _copy.deepcopy(int(n))
+    except (TypeError, ValueError, AttributeError):
+        raise TypeError('n mora biti klase int.')
+    if n < 0:
+        raise ValueError('n mora biti nenegativan.')
+
+    # Saniraj parametre mu i sigma.
+    if not isinstance(mu, tuple):
+        mu = (mu, mu)
+    if not isinstance(sigma, tuple):
+        sigma = (sigma, sigma)
+    if len(mu) != 2:
+        raise ValueError('mu mora biti dvoclani tuple.')
+    if len(sigma) != 2:
+        raise ValueError('sigma mora biti dvoclani tuple.')
+    mu = list(mu)
+    sigma = list(sigma)
+    for i in iter(range(2)):
+        if (
+            not isinstance(mu[i], _np.ndarray) and
+            (hasattr(mu[i], '__iter__') or hasattr(mu[i], '__array__'))
+        ):
+            try:
+                mu[i] = _np.array(mu[i])
+            except (TypeError, ValueError, AttributeError):
+                raise TypeError('mu mora biti skalar ili klase numpy.ndarray.')
+        if isinstance(mu[i], _np.ndarray):
+            if not issubclass(mu[i].dtype.type, _numbers.Complex):
+                raise TypeError('mu mora biti niz numerickih vrijednosti.')
+            if mu[i].ndim != 1:
+                raise ValueError('mu mora biti jednodimenzionalni niz.')
+            if mu[i].size != 1 and mu[i].size != n:
+                raise ValueError('mu mora biti duljine n.')
+            mu[i] = mu[i].astype(complex)
+            if (_np.isnan(mu[i]) | _np.isinf(mu[i])).any():
+                raise ValueError(
+                    'mu mora sadrzavati samo definirane i konacne vrijednosti.'
+                )
+        else:
+            if not isinstance(mu[i], _numbers.Complex):
+                raise TypeError('mu mora biti numericki skalar')
+            try:
+                mu[i] = _copy.deepcopy(complex(mu[i]))
+            except (TypeError, ValueError, AttributeError):
+                raise TypeError('')
+            if (
+                _math.isnan(mu[i].real) or
+                _math.isnan(mu[i].imag) or
+                _math.isinf(mu[i].real) or
+                _math.isinf(mu[i].imag)
+            ):
+                raise ValueError('mu ne smije biti NaN ili beskonacno.')
+        if (
+            not isinstance(sigma[i], _np.ndarray) and
+            (hasattr(sigma[i], '__iter__') or hasattr(sigma[i], '__array__'))
+        ):
+            try:
+                sigma[i] = _np.array(sigma[i])
+            except (TypeError, ValueError, AttributeError):
+                raise TypeError(
+                    'sigma mora biti skalar ili klase numpy.ndarray.'
+                )
+        if isinstance(sigma[i], _np.ndarray):
+            if not issubclass(sigma[i].dtype.type, _numbers.Complex):
+                raise TypeError('sigma mora biti niz numerickih vrijednosti.')
+            if sigma[i].ndim != 1:
+                raise ValueError('sigma mora biti jednodimenzionalni niz.')
+            if sigma[i].size != 1 and sigma[i].size != n:
+                raise ValueError('sigma mora biti duljine n.')
+            sigma[i] = sigma[i].astype(complex)
+            if (_np.isnan(sigma[i]) | _np.isinf(sigma[i])).any():
+                raise ValueError(
+                    'sigma mora sadrzavati samo definirane i konacne '
+                    'vrijednosti.'
+                )
+        else:
+            if not isinstance(sigma[i], _numbers.Complex):
+                raise TypeError('sigma mora biti numericki skalar')
+            try:
+                sigma[i] = _copy.deepcopy(complex(sigma[i]))
+            except (TypeError, ValueError, AttributeError):
+                raise TypeError('')
+            if (
+                _math.isnan(sigma[i].real) or
+                _math.isnan(sigma[i].imag) or
+                _math.isinf(sigma[i].real) or
+                _math.isinf(sigma[i].imag)
+            ):
+                raise ValueError('sigma ne smije biti NaN ili beskonacno.')
+    mu = tuple(mu)
+    sigma = tuple(sigma)
+
+    # Generiraj "realne" i "imaginarne" dijelove koeficijenata.
+    Fr = (sigma[0] * _np.random.randn(n)) + mu[0]
+    Fi = (sigma[1] * _np.random.randn(n)) + mu[1]
+
+    # Generiraj niz koeficijenata jednodimenzionalnog Fourierovog reda.
+    F = _np.array(Fr + Fi * complex(0.0, 1.0), dtype = complex, order = 'F')
+
+    # Po potrebi pretvori F u skalar.
+    if isinstance(F, _np.ndarray):
+        if F.shape == tuple():
+            F = F.dtype.type(F)
+        elif n == 1:
+            F = F.dtype.type(F[0])
+
+    # Vrati generirani niz F.
+    return F
