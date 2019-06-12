@@ -196,6 +196,10 @@ class ExponentialSmooth (object):
             a = a.A
 
         # Saniraj parametar n.
+        if isinstance(n, _np.ndarray):
+            if n.shape == tuple() or n.size == 1:
+                n = n.ravel()
+                n = n.dtype.type(n[0])
         if not isinstance(n, _numbers.Integral):
             raise TypeError('n mora biti klase int.')
         try:
@@ -228,12 +232,13 @@ class ExponentialSmooth (object):
         # Izračunaj (i spremi u atribute objekta self) inicijalni trend i
         # inicijalne sezonalne komponente tenzora a.
         self._b = (
-            (self._a[self._n:2 * self._n] - self._a[:self._n]).sum() /
+            (self._a[self._n:2 * self._n] - self._a[:self._n]).sum(axis = 0) /
             float(self._n) ** 2
         )
         if isinstance(self._b, _np.ndarray):
-            if self._b.shape == tuple():
-                self._b = self._b.dtype.type(self._b)
+            if self._b.shape == tuple() or self._b.size == 1:
+                self._b = self._b.ravel()
+                self._b = self._b.dtype.type(self._b[0])
         self._s = _np.array(
             [
                 (self._a[i:N * self._n:self._n] - avg).sum(axis = 0)
@@ -254,13 +259,15 @@ class ExponentialSmooth (object):
         k : int in range [1, +inf), optional
             Broj vrijednosti koje se predviđa (zadana vrijednost je 1).
 
-        theta : float in range [0, 1] or tuple of 3 floats in range [0, 1]
+        theta : float in range [0, 1] or array of such or tuple of 3 of such
             Parametri eksponencijalnog izglađivanja (zadana vrijednost je 0.5).
             Ako je jedinstvena vrijednost, uzima se
             `theta = (theta, theta, theta)`.  Vrijednost `theta[0]` koeficijent
             je izglađivanja visine, vrijednost `theta[1]` koeficijent je
             izglađivanja trenda, a vrijednost `theta[2]` je koeficijent
-            izglađivanja sezonalnih komponenti.
+            izglađivanja sezonalnih komponenti.  Ako je neka od vrijednosti
+            `theta` klase `numpy.ndarray`, pri računu se provode standardna
+            pravila *broadcastinga*.
 
         Povratne vrijednosti
         --------------------
@@ -275,12 +282,17 @@ class ExponentialSmooth (object):
         Iznimke
         -------
         TypeError
-            Parametar `k` nije realni broj, parametar `theta` sadrži vrijednost
-            koja nije realni broj.
+            Parametar `k` nije cijeli broj, parametar `theta` sadrži vrijednost
+            koja nije realni broj ni tenzor realnih brojeva.
 
         ValueError
             Parametar `k` nije u intervalu [1, +inf), parametar `theta` sadrži
             vrijednost koja nije u intervalu [0, 1].
+
+        other
+            Ako je neka od vrijednosti `theta` klase `numpy.ndarray` takav da
+            se standardna pravila *broadcastinga* krše, iznimke koje takav
+            račun izbacuje ne hvataju se.
 
         """
 
@@ -289,6 +301,10 @@ class ExponentialSmooth (object):
             raise TypeError('self mora biti klase ExponentialSmooth.')
 
         # Saniraj parametar k.
+        if isinstance(k, _np.ndarray):
+            if k.shape == tuple() or k.size == 1:
+                k = k.ravel()
+                k = k.dtype.type(k[0])
         if not isinstance(k, _numbers.Integral):
             raise TypeError('k mora biti klase int.')
         try:
@@ -300,21 +316,77 @@ class ExponentialSmooth (object):
 
         # Saniraj parametar theta.
         if not isinstance(theta, tuple):
-            theta = _copy.deepcopy((theta, theta, theta))
+            if isinstance(theta, _np.ndarray):
+                theta = _copy.deepcopy((theta, theta, theta))
+            else:
+                if hasattr(theta, '__iter__'):
+                    theta = _copy.deepcopy(tuple(theta))
+                else:
+                    theta = _copy.deepcopy((theta, theta, theta))
+        else:
+            theta = _copy.deepcopy(theta)
         if len(theta) != 3:
-            raise ValueError('theta mora biti troclani tuple.')
+            theta = _copy.deepcopy((theta, theta, theta))
         theta = list(theta)
         for i in iter(range(3)):
-            if not (isinstance(theta[i], _numbers.Real)):
-                raise TypeError('theta mora biti klase float.')
-            try:
-                theta[i] = _copy.deepcopy(float(theta[i]))
-            except (TypeError, ValueError, AttributeError):
-                raise TypeError('theta mora biti klase float.')
-            if _math.isnan(theta[i]) or _math.isinf(theta[i]):
-                raise ValueError('theta ne smije biti NaN ili beskonacno.')
-            if theta[i] < 0.0 or theta[i] > 1.0:
-                raise ValueError('theta mora biti u intervalu [0, 1].')
+            if (
+                not isinstance(theta[i], _np.ndarray) and
+                (
+                    hasattr(theta[i], '__iter__') or
+                    hasattr(theta[i], '__array__')
+                )
+            ):
+                    try:
+                        theta[i] = _np.array(theta[i])
+                    except (TypeError, ValueError, AttributeError):
+                        raise TypeError(
+                            'theta mora biti skalar ili klase numpy.ndarray.'
+                        )
+            if isinstance(theta[i], _np.ndarray):
+                if theta[i].shape == tuple() or theta[i].size == 1:
+                    theta[i] = theta[i].ravel()
+                    theta[i] = theta[i].dtype.type(theta[i][0])
+            if isinstance(theta[i], _np.ndarray):
+                if not issubclass(
+                    theta[i].dtype.type,
+                    (_numbers.Real, int, bool, _np.bool, _np.bool8, _np.bool_)
+                ):
+                    raise TypeError(
+                        'theta mora biti tenzor realnih vrijednosti.'
+                    )
+                if issubclass(
+                    theta[i].dtype.type,
+                    (int, bool, _np.bool, _np.bool8, _np.bool_)
+                ):
+                    theta[i] = theta[i].astype(float)
+                if not theta[i].ndim:
+                    raise ValueError(
+                        'thta mora biti barem jednodimenzionalni tenzor.'
+                    )
+                if not theta[i].size:
+                    raise ValueError('theta mora biti neprazni tenzor.')
+                if (_np.isnan(theta[i]) | _np.isinf(theta[i])).any():
+                    raise ValueError(
+                        'theta mora sadrzavati samo definirane i konacne '
+                        'vrijednosti.'
+                    )
+                if ((theta[i] < 0.0) | (theta[i] > 1.0)).any():
+                    raise ValueError(
+                        'theta mora sadrzavati vrijednosti u intervalu [0, 1].'
+                    )
+                if isinstance(theta[i], _np.matrix):
+                    theta[i] = theta[i].A
+            else:
+                if not (isinstance(theta[i], _numbers.Real)):
+                    raise TypeError('theta mora biti klase float.')
+                try:
+                    theta[i] = _copy.deepcopy(float(theta[i]))
+                except (TypeError, ValueError, AttributeError):
+                    raise TypeError('theta mora biti klase float.')
+                if _math.isnan(theta[i]) or _math.isinf(theta[i]):
+                    raise ValueError('theta ne smije biti NaN ili beskonacno.')
+                if theta[i] < 0.0 or theta[i] > 1.0:
+                    raise ValueError('theta mora biti u intervalu [0, 1].')
         theta = tuple(theta)
 
         # Izračunaj 1 - theta po komponentama.
@@ -363,7 +435,7 @@ class ExponentialSmooth (object):
         if isinstance(y, _np.ndarray):
             if k == 1:
                 if y.ndim == 1:
-                    y = y.dtype.type(y)
+                    y = y.dtype.type(y[0])
                 else:
                     y.shape = y.shape[1:]
             else:
@@ -525,6 +597,10 @@ def cwt (Z, theta = 0.5, norm = False):
         Z = Z.astype(float)
 
     # Saniraj parametar theta.
+    if isinstance(theta, _np.ndarray):
+        if theta.shape == tuple() or theta.size == 1:
+            theta = theta.ravel()
+            theta = theta.dtype.type(theta[0])
     if not isinstance(theta, _numbers.Real):
         raise TypeError('theta mora biti realni broj.')
     try:
@@ -537,6 +613,10 @@ def cwt (Z, theta = 0.5, norm = False):
         raise ValueError('theta mora biti u intervalu [0, 1).')
 
     # Saniraj parametar norm.
+    if isinstance(norm, _np.ndarray):
+        if norm.shape == tuple() or norm.size == 1:
+            norm = norm.ravel()
+            norm = norm.dtype.type(norm[0])
     if not isinstance(
         norm,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
@@ -565,7 +645,8 @@ def cwt (Z, theta = 0.5, norm = False):
     # Po potrebi pretvori Z u skalar.
     if isinstance(Z_compressed, _np.ndarray):
         if Z_compressed.shape == tuple():
-            Z_compressed = Z_compressed.dtype.type(Z_compressed)
+            Z_compressed = Z_compressed.ravel()
+            Z_compressed = Z_compressed.dtype.type(Z_compressed[0])
 
     # Vrati kompresijsku sumu.
     return Z_compressed
@@ -700,6 +781,10 @@ def tsvd (X, k = None, compute = True):
         X = X.astype(float)
 
     # Saniraj parametar k.
+    if isinstance(k, _np.ndarray):
+        if k.shape == tuple() or k.size == 1:
+            k = k.ravel()
+            k = k.dtype.type(k[0])
     if k is not None:
         if not isinstance(k, _numbers.Integral):
             raise TypeError('k mora biti None ili klase int.')
@@ -713,6 +798,10 @@ def tsvd (X, k = None, compute = True):
             raise ValueError('k ne smije nadmasiti manju dimenziju matrice X.')
 
     # Saniraj parametar compute.
+    if isinstance(compute, _np.ndarray):
+        if compute.shape == tuple() or compute.size == 1:
+            compute = compute.ravel()
+            compute = compute.dtype.type(compute[0])
     if not isinstance(
         compute,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
@@ -937,6 +1026,10 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
         X = X.astype(float)
 
     # Saniraj parametar beta.
+    if isinstance(beta, _np.ndarray):
+        if beta.shape == tuple() or beta.size == 1:
+            beta = beta.ravel()
+            beta = beta.dtype.type(beta[0])
     if not isinstance(beta, _numbers.Real):
         raise TypeError('beta mora biti realni broj.')
     try:
@@ -949,6 +1042,10 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
         raise ValueError('beta mora biti u intervalu (0, 1).')
 
     # Saniraj parametar k.
+    if isinstance(k, _np.ndarray):
+        if k.shape == tuple() or k.size == 1:
+            k = k.ravel()
+            k = k.dtype.type(k[0])
     if k is not None:
         if not isinstance(k, _numbers.Integral):
             raise TypeError('k mora biti None ili klase int.')
@@ -962,6 +1059,10 @@ def t_Katz_score (X, beta = 0.5, k = None, compute = True):
             raise ValueError('k ne smije nadmasiti dimenzije matrice X.')
 
     # Saniraj parametar compute.
+    if isinstance(compute, _np.ndarray):
+        if compute.shape == tuple() or compute.size == 1:
+            compute = compute.ravel()
+            compute = compute.dtype.type(compute[0])
     if not isinstance(
         compute,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
@@ -1185,6 +1286,10 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
         X = X.astype(float)
 
     # Saniraj parametar beta.
+    if isinstance(beta, _np.ndarray):
+        if beta.shape == tuple() or beta.size == 1:
+            beta = beta.ravel()
+            beta = beta.dtype.type(beta[0])
     if not isinstance(beta, _numbers.Real):
         raise TypeError('beta mora biti realni broj.')
     try:
@@ -1197,6 +1302,10 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
         raise ValueError('beta mora biti u intervalu (0, 1].')
 
     # Saniraj parametar k.
+    if isinstance(k, _np.ndarray):
+        if k.shape == tuple() or k.size == 1:
+            k = k.ravel()
+            k = k.dtype.type(k[0])
     if k is not None:
         if not isinstance(k, _numbers.Integral):
             raise TypeError('k mora biti None ili klase int.')
@@ -1210,6 +1319,10 @@ def bt_Katz_score (X, beta = 0.5, k = None, compute = True):
             raise ValueError('k ne smije nadmasiti manju dimenziju matrice X.')
 
     # Saniraj parametar compute.
+    if isinstance(compute, _np.ndarray):
+        if compute.shape == tuple() or compute.size == 1:
+            compute = compute.ravel()
+            compute = compute.dtype.type(compute[0])
     if not isinstance(
         compute,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
@@ -1439,6 +1552,10 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
         Z = Z.astype(float)
 
     # Saniraj parametar k.
+    if isinstance(k, _np.ndarray):
+        if k.shape == tuple() or k.size == 1:
+            k = k.ravel()
+            k = k.dtype.type(k[0])
     if k is not None:
         if not isinstance(k, _numbers.Integral):
             raise TypeError('k mora biti None ili klase int.')
@@ -1454,6 +1571,10 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
             )
 
     # Saniraj parametar T0.
+    if isinstance(T0, _np.ndarray):
+        if T0.shape == tuple() or T0.size == 1:
+            T0 = T0.ravel()
+            T0 = T0.dtype.type(T0[0])
     if T0 is not None:
         if not isinstance(T0, _numbers.Integral):
             raise TypeError('T0 mora biti None ili klase int.')
@@ -1466,6 +1587,10 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
         T0 = min(T0, int(Z.shape[-1]))
 
     # Saniraj parametar predict.
+    if isinstance(predict, _np.ndarray):
+        if predict.shape == tuple() or predict.size == 1:
+            predict = predict.ravel()
+            predict = predict.dtype.type(predict[0])
     if predict is None:
         if ((T0 is None and Z.shape[-1] == 1) or T0 == 1) and k == 1:
             predict = lambda x : x
@@ -1477,6 +1602,10 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
         )
 
     # Saniraj parametar compute.
+    if isinstance(compute, _np.ndarray):
+        if compute.shape == tuple() or compute.size == 1:
+            compute = compute.ravel()
+            compute = compute.dtype.type(compute[0])
     if not isinstance(
         compute,
         (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
@@ -1497,6 +1626,7 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
     for i in iter(range(int(Z.ndim))):
         cpd[i] = _np.array(cpd[i], copy = True, order = 'F')
         if cpd[i].ndim <= 1:
+            cpd[i] = cpd[i].ravel()
             cpd[i] = cpd[i].reshape((cpd[i].size, 1)).copy(order = 'F')
         for k in iter(range(int(l.size))):
             aux_N = _np.linalg.norm(cpd[i][:, k])
@@ -1507,6 +1637,11 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
                 l[k] = 0
                 cpd[i][:, k] = 0
             del aux_N
+    I = _np.flip(_np.argsort(l)).copy(order = 'F')
+    l = l[I].copy(order = 'F')
+    for i in iter(range(int(Z.ndim))):
+        cpd[i] = cpd[i][:, I].copy(order = 'F')
+    del I
 
     # Predvidi vrijednosti posljednje komponente.
     if T0 is not None:
@@ -1526,6 +1661,8 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
             cpd[-1] = _np.array(cpd[-1])
         except (TypeError, ValueError):
             raise TypeError('Predikcija mora biti klase numpy.ndarray.')
+    if cpd[-1].shape == tuple() or cpd[-1].size == 1:
+        cpd[-1] = cpd[-1].ravel()
     if not issubclass(
         cpd[-1].dtype.type,
         (_numbers.Complex, int, bool, _np.bool, _np.bool8, _np.bool_)
@@ -1537,6 +1674,8 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
         )
     if not cpd[-1].size:
         raise ValueError('Predikcija ne smije biti prazna.')
+    if cpd[-1].size == 1:
+        cpd[-1] = cpd[-1][0] * _np.ones(l.size, dtype = int, order = 'F')
     if isinstance(cpd[-1], _np.matrix):
         cpd[-1] = cpd[-1].A
     if cpd[-1].ndim == 2:
@@ -1544,8 +1683,8 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
     else:
         cpd[-1]= cpd[-1].reshape((cpd[-1].size, 1)).copy(order = 'C')
     if cpd[-1].shape[0] != l.size:
-        if l.size == 1 and cpd[-1].shape[0] != 1:
-            cpd[-1] = cpd[-1].T.copy(order = 'C')
+        if l.size == 1 and cpd[-1].ndim == 1 and cpd[-1].size != 1:
+            cpd[-1] = cpd[-1] = cpd[-1].reshape((1, cpd[-1].size))
         else:
             raise ValueError('Predikcija mora biti koliko i komponenti.')
 
@@ -1584,11 +1723,13 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
     # Po potrebi redimenzioniraj predikciju ili ju pretvori u skalar.
     if isinstance(S, _np.ndarray):
         if S.shape == tuple():
-            S = S.dtype.type(S)
+            S = S.ravel()
+            S = S.dtype.type(S[0])
         elif S.shape[-1] == 1:
             S = S.reshape(S.shape[:-1]).copy(order = 'F')
             if S.shape == tuple():
-                S = S.dtype.type(S)
+                S = S.ravel()
+                S = S.dtype.type(S[0])
         else:
             S = S.copy(order = 'F')
 
@@ -1597,11 +1738,11 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
 
 def rand_fft (n, mu = 0.0, sigma = _math.sqrt(0.5)):
     """
-    Generiraj koeficijente slučajnog jednodimenzionalnog Fourierovog reda.
+    Generiraj koeficijente slučajnog jednodimenzionalne diskretne Fourireove transformacije.
 
     Funkcija normalnom distribucijom generira parametar koji se može
     proslijediti funkcijama `numpy.fft.ifft` i `numpy.fft.irfft` kao
-    koeficijenti jednodimenzionalnog Fourierovog reda.
+    koeficijenti jednodimenzionalne diskretne Fourireove transformacije.
 
     Ako su `mu` i `sigma` `tuple`-ovi duljine 2, povratna vrijednost
     ekvivalentna je pozivu (osim što se za `n == 1` ekstrahira jedinstveni
@@ -1658,16 +1799,36 @@ def rand_fft (n, mu = 0.0, sigma = _math.sqrt(0.5)):
 
     # Saniraj parametre mu i sigma.
     if not isinstance(mu, tuple):
-        mu = (mu, mu)
+        if isinstance(mu, _np.ndarray):
+            mu = _copy.deepcopy((mu, mu))
+        else:
+            if hasattr(mu, '__iter__'):
+                mu = _copy.deepcopy(tuple(mu))
+            else:
+                mu = _copy.deepcopy((mu, mu))
+    else:
+        mu = _copy.deepcopy(mu)
     if not isinstance(sigma, tuple):
-        sigma = (sigma, sigma)
+        if isinstance(sigma, _np.ndarray):
+            sigma = _copy.deepcopy((sigma, sigma))
+        else:
+            if hasattr(sigma, '__iter__'):
+                sigma = _copy.deepcopy(tuple(sigma))
+            else:
+                sigma = _copy.deepcopy((sigma, sigma))
+    else:
+        mu = _copy.deepcopy(mu)
     if len(mu) != 2:
-        raise ValueError('mu mora biti dvoclani tuple.')
+        mu = _copy.deepcopy((mu, mu))
     if len(sigma) != 2:
-        raise ValueError('sigma mora biti dvoclani tuple.')
+        sigma = _copy.deepcopy((sigma, sigma))
     mu = list(mu)
     sigma = list(sigma)
     for i in iter(range(2)):
+        if isinstance(mu[i], _np.ndarray):
+            if mu[i].shape == tuple() or mu[i].size == 1:
+                mu[i] = mu[i].ravel()
+                mu[i] = mu[i].dtype.type(mu[i][0])
         if (
             not isinstance(mu[i], _np.ndarray) and
             (hasattr(mu[i], '__iter__') or hasattr(mu[i], '__array__'))
@@ -1702,6 +1863,10 @@ def rand_fft (n, mu = 0.0, sigma = _math.sqrt(0.5)):
                 _math.isinf(mu[i].imag)
             ):
                 raise ValueError('mu ne smije biti NaN ili beskonacno.')
+        if isinstance(sigma[i], _np.ndarray):
+            if sigma[i].shape == tuple() or sigma[i].size == 1:
+                sigma[i] = sigma[i].ravel()
+                sigma[i] = sigma[i].dtype.type(sigma[i][0])
         if (
             not isinstance(sigma[i], _np.ndarray) and
             (hasattr(sigma[i], '__iter__') or hasattr(sigma[i], '__array__'))
@@ -1746,14 +1911,14 @@ def rand_fft (n, mu = 0.0, sigma = _math.sqrt(0.5)):
     Fr = (sigma[0] * _np.random.randn(n)) + mu[0]
     Fi = (sigma[1] * _np.random.randn(n)) + mu[1]
 
-    # Generiraj niz koeficijenata jednodimenzionalnog Fourierovog reda.
+    # Generiraj niz koeficijenata jednodimenzionalne diskretne Fourireove
+    # transformacije.
     F = _np.array(Fr + Fi * complex(0.0, 1.0), dtype = complex, order = 'F')
 
     # Po potrebi pretvori F u skalar.
     if isinstance(F, _np.ndarray):
-        if F.shape == tuple():
-            F = F.dtype.type(F)
-        elif n == 1:
+        if F.shape == tuple() or F.size == 1:
+            F = F.ravel()
             F = F.dtype.type(F[0])
 
     # Vrati generirani niz F.
