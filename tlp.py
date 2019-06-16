@@ -236,12 +236,12 @@ class ExponentialSmooth (object):
             float(self._n) ** 2
         )
         if isinstance(self._b, _np.ndarray):
-            if self._b.shape == tuple() or self._b.size == 1:
+            if self._b.shape in {tuple(), tuple([1])}:
                 self._b = self._b.ravel()
                 self._b = self._b.dtype.type(self._b[0])
         self._s = _np.array(
             [
-                (self._a[i:N * self._n:self._n] - avg).sum(axis = 0)
+                (self._a[i::self._n] - avg).sum(axis = 0)
                     for i in iter(range(self._n))
             ],
             order = 'F'
@@ -250,13 +250,13 @@ class ExponentialSmooth (object):
         # Vrati self.
         return self
 
-    def predict (self, k = 1, theta = 0.5):
+    def predict (self, k = 1, theta = 0.5, return_smooth = False):
         """
         Predvidi vrijednosti tenzora.
 
         Parametri
         ---------
-        k : int in range [1, +inf), optional
+        k : int in range [0, +inf), optional
             Broj vrijednosti koje se predviđa (zadana vrijednost je 1).
 
         theta : float in range [0, 1] or array of such or tuple of 3 of such
@@ -269,8 +269,31 @@ class ExponentialSmooth (object):
             `theta` klase `numpy.ndarray`, pri računu se provode standardna
             pravila *broadcastinga*.
 
+        return_smooth : boolean, optional
+            Ako je istina, vraćaju se izglađeni tenzor `a` i izračunati
+            trendovi, sezonalne komponente i visine (zadana vrijednost je laž).
+
         Povratne vrijednosti
         --------------------
+        a : array
+            Izglađeni originalni tenzor `a` (istog oblika).  Ova se povratna
+            vrijednost vraća ako je `return_smooth` istina.
+
+        b : array
+            Izračunati trendovi.  Oblik tenzora `b` je takav da je po zadnjoj
+            dimenziji veličine `a.shape[-1]`, a po prethodnima
+            `self.initial_trend_.shape` odnosno je vektor ako je
+            `self.initial_trend_` skalar.  Ova se povratna vrijednost vraća ako
+            je `return_smooth` istina.
+
+        s : array
+            Izračunate sezonalne komponente (oblika `a.shape`).  Ova se
+            povratna vrijednost vraća ako je `return_smooth` istina.
+
+        l : array
+            Izračunate visine (oblika `a.shape`).  Ova se povratna vrijednost
+            vraća ako je `return_smooth` istina.
+
         y : array
             Predviđenih `k` vrijednosti tenzora `a`.  Prvih `a.ndim - 1`
             dimenzija jednakih je veličina kao tenzora `a`, a posljednja
@@ -283,11 +306,13 @@ class ExponentialSmooth (object):
         -------
         TypeError
             Parametar `k` nije cijeli broj, parametar `theta` sadrži vrijednost
-            koja nije realni broj ni tenzor realnih brojeva.
+            koja nije realni broj ni tenzor realnih brojeva, parametar
+            `return_smooth` nije istinitosna vrijednost.
 
         ValueError
-            Parametar `k` nije u intervalu [1, +inf), parametar `theta` sadrži
-            vrijednost koja nije u intervalu [0, 1].
+            Parametar `k` nije u intervalu [0, +inf), parametar `theta` sadrži
+            vrijednost koja nije u intervalu [0, 1], parametar `return_smooth`
+            nije laž/istina.
 
         other
             Ako je neka od vrijednosti `theta` klase `numpy.ndarray` takav da
@@ -311,8 +336,8 @@ class ExponentialSmooth (object):
             k = _copy.deepcopy(int(k))
         except (TypeError, ValueError, AttributeError):
             raise TypeError('k mora biti klase int.')
-        if k <= 0:
-            raise ValueError('k mora biti strogo pozitivan.')
+        if k < 0:
+            raise ValueError('k mora biti nenegativan.')
 
         # Saniraj parametar theta.
         if not isinstance(theta, tuple):
@@ -389,6 +414,23 @@ class ExponentialSmooth (object):
                     raise ValueError('theta mora biti u intervalu [0, 1].')
         theta = tuple(theta)
 
+        # Saniraj parametar return_smooth.
+        if isinstance(return_smooth, _np.ndarray):
+            if return_smooth.shape == tuple() or return_smooth.size == 1:
+                return_smooth = return_smooth.ravel()
+                return_smooth = return_smooth.dtype.type(return_smooth[0])
+        if not isinstance(
+            return_smooth,
+            (_numbers.Integral, int, bool, _np.bool, _np.bool8, _np.bool_)
+        ):
+            raise TypeError('return_smooth mora biti klase bool.')
+        if return_smooth not in {0, False, 1, True}:
+            raise ValueError('return_smooth mora biti laz/istina.')
+        try:
+            return_smooth = _copy.deepcopy(bool(return_smooth))
+        except (TypeError, ValueError):
+            raise TypeError('return_smooth mora biti klase bool.')
+
         # Izračunaj 1 - theta po komponentama.
         one_min_theta = (1.0 - theta[0], 1.0 - theta[1], 1.0 - theta[2])
 
@@ -407,31 +449,61 @@ class ExponentialSmooth (object):
                 dtype = self._s.dtype,
                 order = 'F'
         )
-        b = _copy.deepcopy(self._b)
-        s = _copy.deepcopy(self._s)
-        l = (_copy.deepcopy(self._a[0]), _copy.deepcopy(self._a[0]))
-        for i in iter(range(1, int(self._a.shape[0]))):
-            val = _copy.deepcopy(self._a[i])
-            l = (
-                l[1],
-                (
-                    theta[0] * (val - s[i % self._n]) +
-                    one_min_theta[0] * (l[1] + b)
-                )
+        b = self._b * (
+            _np.ones(
+                tuple(
+                    _np.concatenate(
+                        ([self._a.shape[0]], self._b.shape)
+                    ).tolist()
+                ),
+                dtype = self._b.dtype,
+                order = 'F'
+            ) if isinstance(self._b, _np.ndarray) else _np.ones(
+                self._a.shape[0],
+                dtype = type(self._b),
+                order = 'F'
             )
-            b = theta[1] * (l[1] - l[0]) + one_min_theta[1] * b
-            s[i % self._n] = (
-                theta[2] * (val - l[1]) + one_min_theta[2] * s[i % self._n]
+        )
+        s = _np.zeros(self._a.shape, dtype = self._s.dtype, order = 'F')
+        for i in iter(range(self._n)):
+            s[i::self._n] = self._s[i]
+        l = _copy.deepcopy(self._a)
+        y[0] = self._a[0]
+        for i in iter(range(1, self._n)):
+            l[i] = (
+                theta[0] * (self._a[i] - s[i]) +
+                one_min_theta[0] * (l[i - 1] + b[i - 1])
             )
-            y[i] = l[1] + b + s[i % self._n]
+            b[i] = theta[1] * (l[i] - l[i - 1]) + one_min_theta[1] * b[i - 1]
+            s[i] = theta[2] * (self._a[i] - l[i]) + one_min_theta[2] * s[i]
+            y[i] = l[i] + b[i] + s[i]
+        for i in iter(range(self._n, int(self._a.shape[0]))):
+            l[i] = (
+                theta[0] * (self._a[i] - s[i]) +
+                one_min_theta[0] * (l[i - 1] + b[i - 1])
+            )
+            b[i] = theta[1] * (l[i] - l[i - 1]) + one_min_theta[1] * b[i - 1]
+            s[i] = (
+                theta[2] * (self._a[i] - l[i]) +
+                one_min_theta[2] * s[i - self._n]
+            )
+            y[i] = l[i] + b[i] + s[i]
         for i in iter(range(int(self._a.shape[0]), int(y.shape[0]))):
-            y[i] = (l[1] + (i - self._a.shape[0] + 1) * b) + s[i % self._n]
+            y[i] = (
+                l[-1] + (i - self._a.shape[0] + 1) * b[-1] +
+                s[-self._n + (i - self._a.shape[0]) % self._n]
+            )
 
-        # Spremi samo posljednjih k vrijednosti u tenzoru y.
+        # Razdvoji tenzor y na izglađene (a) i predviđene (y) vrijednosti.
+        a = y[:int(self._a.shape[0])].copy(order = 'F')
         y = y[int(self._a.shape[0]):].copy(order = 'F')
 
-        # Po potrebi pojednostavi dimenzionalnost tenzora y odnosno pretvori ga
-        # u skalar.
+        # Redimenzioniraj tenzore a, b, s i l i po potrebi pojednostavi
+        # dimenzionalnost tenzora y odnosno pretvori ga u skalar.
+        a = _np.moveaxis(a, 0, -1).copy(order = 'F')
+        b = _np.moveaxis(b, 0, -1).copy(order = 'F')
+        s = _np.moveaxis(s, 0, -1).copy(order = 'F')
+        l = _np.moveaxis(l, 0, -1).copy(order = 'F')
         if isinstance(y, _np.ndarray):
             if k == 1:
                 if y.ndim == 1:
@@ -441,8 +513,9 @@ class ExponentialSmooth (object):
             else:
                 y = _np.moveaxis(y, 0, -1).copy(order = 'F')
 
-        # Vrati izračunati tenzor y.
-        return y
+        # Vrati sve komponente računa odnosno samo izračunati tenzor y ovisno o
+        # vrijednosti parametra return_smooth.
+        return (a, b, s, l, y) if return_smooth else y
 
     @property
     def series_ (self):
@@ -532,11 +605,11 @@ def cwt (Z, theta = 0.5, norm = False):
     -------
     TypeError
         Parametar `Z` nije tenzor numeričkih vrijednosti, parametar `theta` nije
-        realni broj.
+        realni broj, parametar `norm` nije istinitosna vrijednost.
 
     ValueError
         Parametar `Z` je skalar ili prazni tenzor, parametar `theta` nije u
-        intervalu [0, 1).
+        intervalu [0, 1), parametar `norm` nije laž/istina.
 
     Primjeri
     --------
@@ -1377,7 +1450,7 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
     Z : array
         Tenzor numeričkih vrijednosti čiji se *CP score* računa.
 
-    k : None or int in range [1, min(Z.shape)], optional
+    k : None or int in range [1, max(Z.shape)], optional
         Rang komponenti u dekompoziciji tenzora `Z` (zadana vrijednost je
         `None`).  Ako je `None`, uzima se `k = min(Z.shape)`.
 
@@ -1443,7 +1516,7 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
 
     ValueError
         Parametar `Z` je prazni tenzor ili sadrži nedefinirane ili beskonačne
-        vrijednosti, parametar `k` nije u intervalu [1, `min(Z.shape)`],
+        vrijednosti, parametar `k` nije u intervalu [1, `max(Z.shape)`],
         parametar `T0` nije strogo pozitivan, parametar `compute` nije
         laž/istina, predikcija nije niz/matrica odgovarajućih dimenzija.
 
@@ -1565,9 +1638,9 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
             raise TypeError('k mora biti None ili klase int.')
         if k <= 0:
             raise ValueError('k mora biti strogo pozitivan.')
-        if k > min(Z.shape):
+        if k > max(Z.shape):
             raise ValueError(
-                'k ne smije nadmasiti najmanju dimenziju tenzora Z.'
+                'k ne smije nadmasiti najvecu dimenziju tenzora Z.'
             )
 
     # Saniraj parametar T0.
@@ -1681,12 +1754,13 @@ def cp_score (Z, k = None, T0 = None, predict = None, compute = True):
     if cpd[-1].ndim == 2:
         cpd[-1] = cpd[-1].T.copy(order = 'C')
     else:
-        cpd[-1]= cpd[-1].reshape((cpd[-1].size, 1)).copy(order = 'C')
+        cpd[-1] = (
+            cpd[-1].reshape(
+                (1, cpd[-1].size) if l.size == 1 else (cpd[-1].size, 1)
+            ).copy(order = 'C')
+        )
     if cpd[-1].shape[0] != l.size:
-        if l.size == 1 and cpd[-1].ndim == 1 and cpd[-1].size != 1:
-            cpd[-1] = cpd[-1] = cpd[-1].reshape((1, cpd[-1].size))
-        else:
-            raise ValueError('Predikcija mora biti koliko i komponenti.')
+        raise ValueError('Predikcija mora biti koliko i komponenti.')
 
     # Konvertiraj objekt cpd u tuple.
     cpd = tuple(cpd)
